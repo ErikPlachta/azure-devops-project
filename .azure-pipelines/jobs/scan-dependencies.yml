@@ -1,0 +1,125 @@
+# Reusable Dependency Vulnerability Scan Job
+# Scans for known vulnerabilities in dependencies
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+      - multi
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: failOnHigh
+    type: boolean
+    default: true
+
+  - name: failOnCritical
+    type: boolean
+    default: true
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: DependencyScan
+    displayName: 'Dependency Vulnerability Scan'
+    condition: and(${{ parameters.condition }}, eq(${{ parameters.enabled }}, true))
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      # TypeScript/JavaScript - npm audit
+      - ${{ if or(eq(parameters.language, 'typescript'), eq(parameters.language, 'multi')) }}:
+        - task: NodeTool@0
+          displayName: 'Install Node.js'
+          inputs:
+            versionSpec: '$(tool.node.version)'
+
+        - script: npm ci
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            AUDIT_LEVEL="moderate"
+            if [ "${{ parameters.failOnHigh }}" = "true" ]; then
+              AUDIT_LEVEL="high"
+            fi
+            if [ "${{ parameters.failOnCritical }}" = "true" ]; then
+              AUDIT_LEVEL="critical"
+            fi
+
+            npm audit --audit-level=$AUDIT_LEVEL
+          displayName: 'npm audit'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            npx better-npm-audit audit --level high || true
+          displayName: 'Detailed audit report'
+          workingDirectory: ${{ parameters.workingDirectory }}
+          continueOnError: true
+
+      # Python - pip-audit
+      - ${{ if or(eq(parameters.language, 'python'), eq(parameters.language, 'multi')) }}:
+        - task: UsePythonVersion@0
+          displayName: 'Use Python'
+          inputs:
+            versionSpec: '$(tool.python.version)'
+
+        - script: |
+            pip install pip-audit safety
+          displayName: 'Install audit tools'
+
+        - script: |
+            pip-audit --desc on
+          displayName: 'pip-audit'
+          workingDirectory: ${{ parameters.workingDirectory }}
+          continueOnError: ${{ not(parameters.failOnCritical) }}
+
+        - script: |
+            safety check --full-report || true
+          displayName: 'Safety check'
+          workingDirectory: ${{ parameters.workingDirectory }}
+          continueOnError: true
+
+      # .NET - dotnet list package --vulnerable
+      - ${{ if or(eq(parameters.language, 'dotnet'), eq(parameters.language, 'multi')) }}:
+        - task: UseDotNet@2
+          displayName: 'Use .NET'
+          inputs:
+            version: '$(tool.dotnet.version)'
+
+        - script: |
+            OUTPUT=$(dotnet list package --vulnerable --include-transitive 2>&1)
+            echo "$OUTPUT"
+
+            if echo "$OUTPUT" | grep -q "critical"; then
+              echo "##vso[task.logissue type=error]Critical vulnerabilities found"
+              if [ "${{ parameters.failOnCritical }}" = "true" ]; then
+                exit 1
+              fi
+            fi
+
+            if echo "$OUTPUT" | grep -q "high"; then
+              echo "##vso[task.logissue type=warning]High vulnerabilities found"
+              if [ "${{ parameters.failOnHigh }}" = "true" ]; then
+                exit 1
+              fi
+            fi
+          displayName: 'Check vulnerable packages'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Generate SBOM (all languages)
+      - script: |
+          echo "Generating Software Bill of Materials..."
+          # This could be extended with tools like syft, cyclonedx, etc.
+        displayName: 'Generate SBOM'
+        continueOnError: true

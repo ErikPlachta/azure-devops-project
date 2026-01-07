@@ -1,0 +1,56 @@
+# SonarCloud Configuration Template
+# Copy to project root and customize
+
+# Required: Project identification
+sonar.projectKey=${SONAR_PROJECT_KEY}
+sonar.organization=${SONAR_ORGANIZATION}
+
+# Optional: Display name and version
+sonar.projectName=${PROJECT_NAME}
+sonar.projectVersion=1.0
+
+# Source configuration
+sonar.sources=src
+sonar.tests=tests
+
+# Language-specific settings
+# Uncomment the section for your language
+
+# === TypeScript/JavaScript ===
+# sonar.javascript.lcov.reportPaths=coverage/lcov.info
+# sonar.typescript.lcov.reportPaths=coverage/lcov.info
+# sonar.eslint.reportPaths=eslint-report.json
+# sonar.exclusions=**/node_modules/**,**/dist/**,**/*.test.ts,**/*.spec.ts
+
+# === Python ===
+# sonar.python.version=3.11
+# sonar.python.coverage.reportPaths=coverage.xml
+# sonar.python.xunit.reportPath=test-results.xml
+# sonar.exclusions=**/__pycache__/**,**/venv/**,**/.venv/**,**/tests/**
+
+# === C#/.NET ===
+# sonar.cs.opencover.reportsPaths=**/coverage.opencover.xml
+# sonar.cs.vstest.reportsPaths=**/*.trx
+# sonar.exclusions=**/obj/**,**/bin/**,**/*Tests.cs
+
+# Quality gate thresholds (inherited from org, can override)
+# sonar.qualitygate.wait=true
+
+# Coverage exclusions (common patterns)
+sonar.coverage.exclusions=\
+  **/tests/**,\
+  **/test/**,\
+  **/*Test*.cs,\
+  **/*.test.ts,\
+  **/*.spec.ts,\
+  **/test_*.py,\
+  **/*_test.py,\
+  **/conftest.py,\
+  **/Migrations/**,\
+  **/wwwroot/**
+
+# Duplication exclusions
+sonar.cpd.exclusions=\
+  **/tests/**,\
+  **/*.test.ts,\
+  **/*Test*.cs

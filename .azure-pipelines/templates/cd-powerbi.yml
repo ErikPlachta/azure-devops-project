@@ -1,0 +1,137 @@
+# Power BI CD Template
+# Usage: extends this template from your azure-pipelines.yml
+
+parameters:
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+  - name: workspaceId
+    type: string
+  - name: pbixPath
+    type: string
+    default: ''
+  - name: datasetName
+    type: string
+  - name: triggerRefresh
+    type: boolean
+    default: true
+
+stages:
+  - stage: Deploy_${{ parameters.environment }}
+    displayName: 'Deploy to Power BI ${{ upper(parameters.environment) }}'
+    jobs:
+      - deployment: DeployReport
+        displayName: 'Deploy Power BI Report'
+        environment: 'barings-powerbi-${{ parameters.environment }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+                  ${{ if ne(parameters.pbixPath, '') }}:
+                    condition: always()
+
+                - task: AzurePowerShell@5
+                  displayName: 'Deploy PBIX'
+                  inputs:
+                    azureSubscription: 'barings-${{ parameters.environment }}'
+                    ScriptType: 'InlineScript'
+                    Inline: |
+                      $token = (Get-AzAccessToken -ResourceUrl "https://analysis.windows.net/powerbi/api").Token
+                      $headers = @{
+                        Authorization = "Bearer $token"
+                        "Content-Type" = "multipart/form-data"
+                      }
+
+                      $workspaceId = "${{ parameters.workspaceId }}"
+                      $datasetName = "${{ parameters.datasetName }}"
+
+                      # Find PBIX file
+                      $pbixPath = Get-ChildItem -Path "$(Pipeline.Workspace)/drop" -Filter "*.pbix" | Select-Object -First 1
+                      if (-not $pbixPath) {
+                        Write-Error "No PBIX file found"
+                        exit 1
+                      }
+
+                      Write-Host "Deploying: $($pbixPath.FullName)"
+
+                      # Import PBIX
+                      $importUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/imports?datasetDisplayName=$datasetName&nameConflict=CreateOrOverwrite"
+
+                      $fileBytes = [System.IO.File]::ReadAllBytes($pbixPath.FullName)
+
+                      try {
+                        $response = Invoke-RestMethod -Uri $importUrl -Method Post -Headers $headers -Body $fileBytes
+                        Write-Host "Import started: $($response.id)"
+                      } catch {
+                        Write-Error "Import failed: $_"
+                        exit 1
+                      }
+                    azurePowerShellVersion: 'LatestVersion'
+
+                - ${{ if eq(parameters.triggerRefresh, true) }}:
+                  - task: AzurePowerShell@5
+                    displayName: 'Trigger Dataset Refresh'
+                    inputs:
+                      azureSubscription: 'barings-${{ parameters.environment }}'
+                      ScriptType: 'InlineScript'
+                      Inline: |
+                        $token = (Get-AzAccessToken -ResourceUrl "https://analysis.windows.net/powerbi/api").Token
+                        $headers = @{ Authorization = "Bearer $token" }
+
+                        $workspaceId = "${{ parameters.workspaceId }}"
+                        $datasetName = "${{ parameters.datasetName }}"
+
+                        # Get dataset ID
+                        $datasetsUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/datasets"
+                        $datasets = Invoke-RestMethod -Uri $datasetsUrl -Headers $headers
+                        $dataset = $datasets.value | Where-Object { $_.name -eq $datasetName }
+
+                        if (-not $dataset) {
+                          Write-Error "Dataset not found: $datasetName"
+                          exit 1
+                        }
+
+                        $datasetId = $dataset.id
+                        Write-Host "Found dataset: $datasetId"
+
+                        # Trigger refresh
+                        $refreshUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/datasets/$datasetId/refreshes"
+                        try {
+                          Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
+                          Write-Host "Refresh triggered"
+                        } catch {
+                          Write-Error "Refresh failed: $_"
+                          exit 1
+                        }
+
+                        # Wait for refresh (with timeout)
+                        $timeout = 600  # 10 minutes
+                        $elapsed = 0
+                        while ($elapsed -lt $timeout) {
+                          Start-Sleep -Seconds 30
+                          $elapsed += 30
+
+                          $refreshes = Invoke-RestMethod -Uri $refreshUrl -Headers $headers
+                          $latest = $refreshes.value | Select-Object -First 1
+
+                          Write-Host "Refresh status: $($latest.status)"
+
+                          if ($latest.status -eq "Completed") {
+                            Write-Host "Refresh completed successfully"
+                            exit 0
+                          } elseif ($latest.status -eq "Failed") {
+                            Write-Error "Refresh failed"
+                            exit 1
+                          }
+                        }
+
+                        Write-Error "Refresh timed out"
+                        exit 1
+                      azurePowerShellVersion: 'LatestVersion'

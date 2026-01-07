@@ -1,0 +1,212 @@
+# Reusable Smoke Test Job
+# Post-deployment validation
+
+parameters:
+  - name: targetType
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+      - custom
+
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+
+  # App Service params
+  - name: appServiceUrl
+    type: string
+    default: ''
+
+  - name: healthEndpoint
+    type: string
+    default: '/health'
+
+  - name: endpoints
+    type: object
+    default: []  # Additional endpoints to check: [{path: '/api/v1', expectedStatus: 200}]
+
+  # Databricks params
+  - name: databricksHost
+    type: string
+    default: ''
+
+  - name: jobNamePattern
+    type: string
+    default: ''  # Pattern to match jobs for validation
+
+  # Power BI params
+  - name: workspaceId
+    type: string
+    default: ''
+
+  - name: datasetId
+    type: string
+    default: ''
+
+  # Custom params
+  - name: customScript
+    type: string
+    default: ''
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: timeout
+    type: number
+    default: 300
+
+jobs:
+  - job: SmokeTest_${{ parameters.environment }}
+    displayName: 'Smoke Test (${{ parameters.targetType }})'
+    condition: eq(${{ parameters.enabled }}, true)
+    pool:
+      vmImage: 'ubuntu-latest'
+    timeoutInMinutes: 10
+    steps:
+      # App Service smoke tests
+      - ${{ if eq(parameters.targetType, 'appservice') }}:
+        - script: |
+            BASE_URL="${{ parameters.appServiceUrl }}"
+            HEALTH_ENDPOINT="${{ parameters.healthEndpoint }}"
+            TIMEOUT=${{ parameters.timeout }}
+            ELAPSED=0
+
+            echo "Testing health endpoint: ${BASE_URL}${HEALTH_ENDPOINT}"
+
+            # Wait for health endpoint
+            while [ $ELAPSED -lt $TIMEOUT ]; do
+              RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}${HEALTH_ENDPOINT}" || echo "000")
+              if [ "$RESPONSE" = "200" ]; then
+                echo "✓ Health check passed (HTTP $RESPONSE)"
+                break
+              fi
+              echo "Waiting... (HTTP $RESPONSE, ${ELAPSED}s elapsed)"
+              sleep 10
+              ELAPSED=$((ELAPSED + 10))
+            done
+
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "##vso[task.logissue type=error]Health check failed after ${TIMEOUT}s"
+              exit 1
+            fi
+          displayName: 'Health endpoint check'
+
+        - ${{ each endpoint in parameters.endpoints }}:
+          - script: |
+              URL="${{ parameters.appServiceUrl }}${{ endpoint.path }}"
+              EXPECTED="${{ coalesce(endpoint.expectedStatus, 200) }}"
+
+              echo "Testing: $URL (expecting HTTP $EXPECTED)"
+
+              RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+
+              if [ "$RESPONSE" = "$EXPECTED" ]; then
+                echo "✓ ${{ endpoint.path }} passed (HTTP $RESPONSE)"
+              else
+                echo "##vso[task.logissue type=error]${{ endpoint.path }} failed: expected HTTP $EXPECTED, got HTTP $RESPONSE"
+                exit 1
+              fi
+            displayName: 'Check ${{ endpoint.path }}'
+
+      # Databricks smoke tests
+      - ${{ if eq(parameters.targetType, 'databricks') }}:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '$(tool.python.version)'
+
+        - script: pip install databricks-cli
+          displayName: 'Install Databricks CLI'
+
+        - script: |
+            echo "Verifying Databricks deployment..."
+
+            # List jobs matching pattern
+            PATTERN="${{ parameters.jobNamePattern }}"
+            if [ -z "$PATTERN" ]; then
+              PATTERN=".*-${{ parameters.environment }}$"
+            fi
+
+            JOBS=$(databricks jobs list --output JSON | jq -r ".jobs[] | select(.settings.name | test(\"$PATTERN\")) | .settings.name")
+
+            if [ -z "$JOBS" ]; then
+              echo "##vso[task.logissue type=warning]No jobs found matching pattern: $PATTERN"
+            else
+              echo "Found jobs:"
+              echo "$JOBS"
+            fi
+
+            # Verify workspace connectivity
+            databricks workspace ls / > /dev/null && echo "✓ Workspace connection verified"
+          displayName: 'Databricks verification'
+          env:
+            DATABRICKS_HOST: ${{ parameters.databricksHost }}
+            DATABRICKS_TOKEN: $(databricks-token)
+
+      # Power BI smoke tests
+      - ${{ if eq(parameters.targetType, 'powerbi') }}:
+        - task: AzurePowerShell@5
+          displayName: 'Power BI verification'
+          inputs:
+            azureSubscription: 'barings-${{ parameters.environment }}'
+            ScriptType: 'InlineScript'
+            azurePowerShellVersion: 'LatestVersion'
+            Inline: |
+              $token = (Get-AzAccessToken -ResourceUrl "https://analysis.windows.net/powerbi/api").Token
+              $headers = @{ Authorization = "Bearer $token" }
+
+              $workspaceId = "${{ parameters.workspaceId }}"
+              $datasetId = "${{ parameters.datasetId }}"
+
+              # Verify workspace access
+              $workspaceUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId"
+              try {
+                $workspace = Invoke-RestMethod -Uri $workspaceUrl -Headers $headers
+                Write-Host "✓ Workspace verified: $($workspace.name)"
+              } catch {
+                Write-Error "Failed to access workspace: $_"
+                exit 1
+              }
+
+              # Verify dataset
+              if ($datasetId) {
+                $datasetUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/datasets/$datasetId"
+                try {
+                  $dataset = Invoke-RestMethod -Uri $datasetUrl -Headers $headers
+                  Write-Host "✓ Dataset verified: $($dataset.name)"
+
+                  # Check last refresh
+                  $refreshUrl = "$datasetUrl/refreshes"
+                  $refreshes = Invoke-RestMethod -Uri $refreshUrl -Headers $headers
+                  $latest = $refreshes.value | Select-Object -First 1
+                  if ($latest) {
+                    Write-Host "  Last refresh: $($latest.endTime) - $($latest.status)"
+                  }
+                } catch {
+                  Write-Error "Failed to verify dataset: $_"
+                  exit 1
+                }
+              }
+
+      # Custom smoke tests
+      - ${{ if eq(parameters.targetType, 'custom') }}:
+        - script: |
+            ${{ parameters.customScript }}
+          displayName: 'Custom smoke test'
+
+      # Summary
+      - script: |
+          echo "================================"
+          echo "Smoke Test Summary"
+          echo "================================"
+          echo "Target: ${{ parameters.targetType }}"
+          echo "Environment: ${{ parameters.environment }}"
+          echo "Status: PASSED"
+          echo "================================"
+        displayName: 'Summary'
+        condition: succeeded()

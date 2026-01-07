@@ -1,0 +1,157 @@
+# Reusable Build Artifact Job
+# Builds and publishes deployment artifacts
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: buildConfiguration
+    type: string
+    default: 'Release'
+
+  - name: artifactName
+    type: string
+    default: 'drop'
+
+  - name: outputPath
+    type: string
+    default: ''  # Auto-detect based on language
+
+  - name: includeSourceMaps
+    type: boolean
+    default: false
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: BuildArtifact
+    displayName: 'Build Artifact (${{ parameters.language }})'
+    condition: and(${{ parameters.condition }}, eq(${{ parameters.enabled }}, true))
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      # TypeScript/JavaScript
+      - ${{ if eq(parameters.language, 'typescript') }}:
+        - task: NodeTool@0
+          displayName: 'Install Node.js'
+          inputs:
+            versionSpec: '$(tool.node.version)'
+
+        - task: Cache@2
+          displayName: 'Cache npm'
+          inputs:
+            key: 'npm | "$(Agent.OS)" | ${{ parameters.workingDirectory }}/package-lock.json'
+            path: $(npm_config_cache)
+
+        - script: npm ci
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: npm run build
+          displayName: 'Build'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            OUTPUT_PATH="${{ coalesce(parameters.outputPath, 'dist') }}"
+            if [ "${{ parameters.includeSourceMaps }}" != "true" ]; then
+              find "$OUTPUT_PATH" -name "*.map" -delete
+            fi
+          displayName: 'Clean source maps'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - task: ArchiveFiles@2
+          displayName: 'Archive build'
+          inputs:
+            rootFolderOrFile: '${{ parameters.workingDirectory }}/${{ coalesce(parameters.outputPath, ''dist'') }}'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+            includeRootFolder: false
+
+      # Python
+      - ${{ if eq(parameters.language, 'python') }}:
+        - task: UsePythonVersion@0
+          displayName: 'Use Python'
+          inputs:
+            versionSpec: '$(tool.python.version)'
+
+        - script: |
+            pip install --upgrade pip build wheel
+            pip install -e ".[dev]" || pip install -r requirements.txt
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: python -m build --wheel --outdir dist
+          displayName: 'Build wheel'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - task: ArchiveFiles@2
+          displayName: 'Archive build'
+          inputs:
+            rootFolderOrFile: '${{ parameters.workingDirectory }}/${{ coalesce(parameters.outputPath, ''dist'') }}'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+            includeRootFolder: false
+
+      # .NET
+      - ${{ if eq(parameters.language, 'dotnet') }}:
+        - task: UseDotNet@2
+          displayName: 'Use .NET'
+          inputs:
+            version: '$(tool.dotnet.version)'
+
+        - task: Cache@2
+          displayName: 'Cache NuGet'
+          inputs:
+            key: 'nuget | "$(Agent.OS)" | **/packages.lock.json'
+            path: $(NUGET_PACKAGES)
+
+        - script: dotnet restore
+          displayName: 'Restore'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: dotnet build --configuration ${{ parameters.buildConfiguration }} --no-restore
+          displayName: 'Build'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            dotnet publish \
+              --configuration ${{ parameters.buildConfiguration }} \
+              --no-build \
+              --output $(Build.ArtifactStagingDirectory)/publish
+          displayName: 'Publish'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - task: ArchiveFiles@2
+          displayName: 'Archive build'
+          inputs:
+            rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/publish'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+            includeRootFolder: false
+
+      # Publish artifact (all languages)
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish artifact'
+        inputs:
+          pathToPublish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+          artifactName: ${{ parameters.artifactName }}
+
+      # Record build info
+      - script: |
+          echo "Build ID: $(Build.BuildId)"
+          echo "Build Number: $(Build.BuildNumber)"
+          echo "Source Branch: $(Build.SourceBranch)"
+          echo "Source Version: $(Build.SourceVersion)"
+          echo "Artifact: ${{ parameters.artifactName }}"
+        displayName: 'Build info'

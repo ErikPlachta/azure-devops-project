@@ -1,0 +1,55 @@
+# Environment-Specific Variables
+# Maps environment names to resource configurations
+
+parameters:
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+
+variables:
+  # Environment display names
+  - name: env.displayName
+    ${{ if eq(parameters.environment, 'ut') }}:
+      value: 'Development (UT)'
+    ${{ if eq(parameters.environment, 'st') }}:
+      value: 'Staging (ST)'
+    ${{ if eq(parameters.environment, 'pr') }}:
+      value: 'Production (PR)'
+
+  # Azure subscription connections
+  - name: env.azureSubscription
+    value: 'barings-${{ parameters.environment }}'
+
+  # Key Vault names
+  - name: env.keyVault
+    value: 'kv-barings-${{ parameters.environment }}'
+
+  # Approval requirements
+  - name: env.requiresApproval
+    ${{ if eq(parameters.environment, 'ut') }}:
+      value: false
+    ${{ if eq(parameters.environment, 'st') }}:
+      value: true
+    ${{ if eq(parameters.environment, 'pr') }}:
+      value: true
+
+  # Deployment slots
+  - name: env.useSlot
+    ${{ if eq(parameters.environment, 'pr') }}:
+      value: true
+    ${{ else }}:
+      value: false
+
+  - name: env.slotName
+    value: 'staging'
+
+  # Databricks
+  - name: env.databricks.catalog
+    value: 'catalog_${{ parameters.environment }}'
+
+  # Power BI
+  - name: env.powerbi.workspace
+    value: 'ws-barings-${{ parameters.environment }}'

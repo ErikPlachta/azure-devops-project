@@ -1,0 +1,46 @@
+# TypeScript/JavaScript CI Template (Convenience Wrapper)
+# Wraps the new modular architecture for backwards compatibility
+# Prefer using ci-only.yml or ci-cd-full.yml directly for new projects
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: coverageThreshold
+    type: number
+    default: 90
+
+  - name: configLevel
+    type: string
+    default: 'base'
+    values:
+      - relaxed
+      - base
+      - strict
+
+  - name: runE2E
+    type: boolean
+    default: false
+
+  - name: runSonar
+    type: boolean
+    default: true
+
+stages:
+  - template: ci-only.yml
+    parameters:
+      language: typescript
+      workingDirectory: ${{ parameters.workingDirectory }}
+      configLevel: ${{ parameters.configLevel }}
+      coverageThreshold: ${{ parameters.coverageThreshold }}
+      runLint: true
+      runTests: true
+      runSonar: ${{ parameters.runSonar }}
+      runDependencyScan: true
+      runSecretScan: true
+      buildArtifact: true

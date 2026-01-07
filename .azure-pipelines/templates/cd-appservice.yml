@@ -1,0 +1,85 @@
+# Azure App Service CD Template
+# Usage: extends this template from your azure-pipelines.yml
+
+parameters:
+  - name: azureSubscription
+    type: string
+  - name: appServiceName
+    type: string
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+  - name: useSlot
+    type: boolean
+    default: false
+  - name: slotName
+    type: string
+    default: 'staging'
+  - name: healthEndpoint
+    type: string
+    default: '/health'
+
+stages:
+  - stage: Deploy_${{ parameters.environment }}
+    displayName: 'Deploy to ${{ upper(parameters.environment) }}'
+    jobs:
+      - deployment: Deploy
+        displayName: 'Deploy to App Service'
+        environment: 'barings-${{ parameters.environment }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+
+                - task: AzureWebApp@1
+                  displayName: 'Deploy to App Service'
+                  inputs:
+                    azureSubscription: ${{ parameters.azureSubscription }}
+                    appName: ${{ parameters.appServiceName }}
+                    package: '$(Pipeline.Workspace)/drop/*.zip'
+                    deploymentMethod: 'runFromPackage'
+                    ${{ if eq(parameters.useSlot, true) }}:
+                      deployToSlotOrASE: true
+                      slotName: ${{ parameters.slotName }}
+
+                - script: |
+                    echo "Waiting for app to start..."
+                    sleep 30
+
+                    if [ "${{ parameters.useSlot }}" = "true" ]; then
+                      URL="https://${{ parameters.appServiceName }}-${{ parameters.slotName }}.azurewebsites.net${{ parameters.healthEndpoint }}"
+                    else
+                      URL="https://${{ parameters.appServiceName }}.azurewebsites.net${{ parameters.healthEndpoint }}"
+                    fi
+
+                    response=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+                    if [ "$response" != "200" ]; then
+                      echo "##vso[task.logissue type=error]Health check failed: HTTP $response"
+                      exit 1
+                    fi
+                    echo "Health check passed: HTTP $response"
+                  displayName: 'Smoke test - Health check'
+
+      - ${{ if and(eq(parameters.useSlot, true), eq(parameters.environment, 'pr')) }}:
+        - job: SwapSlots
+          displayName: 'Swap to Production'
+          dependsOn: Deploy
+          pool:
+            vmImage: 'ubuntu-latest'
+          steps:
+            - task: AzureAppServiceManage@0
+              displayName: 'Swap staging to production'
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                action: 'Swap Slots'
+                webAppName: ${{ parameters.appServiceName }}
+                sourceSlot: ${{ parameters.slotName }}
+                targetSlot: 'production'
+                preserveVnet: true

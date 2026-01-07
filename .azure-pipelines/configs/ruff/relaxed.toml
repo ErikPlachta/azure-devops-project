@@ -1,0 +1,33 @@
+# Ruff Relaxed Configuration
+# Lighter rules for internal tools, scripts, POCs
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # Pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear (subset)
+    "RUF",    # Ruff-specific
+]
+
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "B008",   # Function call in default arg
+    "B904",   # Raise without from in except
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+"scripts/**/*.py" = ["T20"]
+
+[lint.isort]
+combine-as-imports = true
+
+[lint.mccabe]
+max-complexity = 20
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

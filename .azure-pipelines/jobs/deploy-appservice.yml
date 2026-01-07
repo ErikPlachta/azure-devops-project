@@ -1,0 +1,140 @@
+# Reusable App Service Deployment Job
+# Supports direct deploy and slot swap
+
+parameters:
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+
+  - name: azureSubscription
+    type: string
+
+  - name: appServiceName
+    type: string
+
+  - name: artifactName
+    type: string
+    default: 'drop'
+
+  - name: deploymentMethod
+    type: string
+    default: 'runFromPackage'
+    values:
+      - runFromPackage
+      - zipDeploy
+      - webDeploy
+
+  - name: useSlot
+    type: boolean
+    default: false
+
+  - name: slotName
+    type: string
+    default: 'staging'
+
+  - name: swapAfterDeploy
+    type: boolean
+    default: false
+
+  - name: healthEndpoint
+    type: string
+    default: '/health'
+
+  - name: healthTimeout
+    type: number
+    default: 120
+
+  - name: enabled
+    type: boolean
+    default: true
+
+jobs:
+  - deployment: Deploy_${{ parameters.environment }}
+    displayName: 'Deploy to ${{ upper(parameters.environment) }}'
+    condition: eq(${{ parameters.enabled }}, true)
+    environment: 'barings-${{ parameters.environment }}'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: current
+              artifact: ${{ parameters.artifactName }}
+
+            # Deploy to App Service
+            - task: AzureWebApp@1
+              displayName: 'Deploy to App Service'
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                appName: ${{ parameters.appServiceName }}
+                package: '$(Pipeline.Workspace)/${{ parameters.artifactName }}/*.zip'
+                deploymentMethod: ${{ parameters.deploymentMethod }}
+                ${{ if eq(parameters.useSlot, true) }}:
+                  deployToSlotOrASE: true
+                  slotName: ${{ parameters.slotName }}
+
+            # Health check
+            - script: |
+                echo "Waiting for app to start..."
+                sleep 30
+
+                if [ "${{ parameters.useSlot }}" = "true" ]; then
+                  BASE_URL="https://${{ parameters.appServiceName }}-${{ parameters.slotName }}.azurewebsites.net"
+                else
+                  BASE_URL="https://${{ parameters.appServiceName }}.azurewebsites.net"
+                fi
+
+                HEALTH_URL="${BASE_URL}${{ parameters.healthEndpoint }}"
+                echo "Checking health at: $HEALTH_URL"
+
+                TIMEOUT=${{ parameters.healthTimeout }}
+                ELAPSED=0
+
+                while [ $ELAPSED -lt $TIMEOUT ]; do
+                  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+                  if [ "$RESPONSE" = "200" ]; then
+                    echo "Health check passed: HTTP $RESPONSE"
+                    exit 0
+                  fi
+                  echo "Waiting... (HTTP $RESPONSE, ${ELAPSED}s elapsed)"
+                  sleep 10
+                  ELAPSED=$((ELAPSED + 10))
+                done
+
+                echo "##vso[task.logissue type=error]Health check failed after ${TIMEOUT}s"
+                exit 1
+              displayName: 'Health check'
+
+  # Slot swap (if enabled)
+  - ${{ if and(eq(parameters.useSlot, true), eq(parameters.swapAfterDeploy, true)) }}:
+    - job: SwapSlot_${{ parameters.environment }}
+      displayName: 'Swap to Production'
+      dependsOn: Deploy_${{ parameters.environment }}
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+        - task: AzureAppServiceManage@0
+          displayName: 'Swap ${{ parameters.slotName }} to production'
+          inputs:
+            azureSubscription: ${{ parameters.azureSubscription }}
+            action: 'Swap Slots'
+            webAppName: ${{ parameters.appServiceName }}
+            sourceSlot: ${{ parameters.slotName }}
+            targetSlot: 'production'
+            preserveVnet: true
+
+        # Verify production health after swap
+        - script: |
+            sleep 30
+            HEALTH_URL="https://${{ parameters.appServiceName }}.azurewebsites.net${{ parameters.healthEndpoint }}"
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
+            if [ "$RESPONSE" != "200" ]; then
+              echo "##vso[task.logissue type=error]Production health check failed after swap: HTTP $RESPONSE"
+              exit 1
+            fi
+            echo "Production health check passed"
+          displayName: 'Verify production health'

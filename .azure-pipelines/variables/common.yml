@@ -1,0 +1,37 @@
+# Common Variables
+# Shared across all pipelines
+
+variables:
+  # Tool versions (single source of truth)
+  - name: tool.node.version
+    value: '20.x'
+  - name: tool.python.version
+    value: '3.11'
+  - name: tool.dotnet.version
+    value: '8.0.x'
+
+  # Agent pools
+  - name: pool.default
+    value: 'ubuntu-latest'
+  - name: pool.windows
+    value: 'windows-latest'
+
+  # Artifact settings
+  - name: artifact.retention.days
+    value: 30
+  - name: artifact.name.default
+    value: 'drop'
+
+  # SonarCloud
+  - name: sonar.organization
+    value: 'barings'
+  - name: sonar.connection
+    value: 'sonarcloud-barings'
+
+  # Naming conventions
+  - name: naming.environment.dev
+    value: 'ut'
+  - name: naming.environment.staging
+    value: 'st'
+  - name: naming.environment.prod
+    value: 'pr'

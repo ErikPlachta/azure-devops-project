@@ -1,0 +1,44 @@
+# Quality Gate Thresholds
+# Single source of truth for all quality requirements
+# Override per-project in .azdo/overrides.yml
+
+variables:
+  # Coverage thresholds
+  - name: coverage.lines.minimum
+    value: 90
+  - name: coverage.branches.minimum
+    value: 85
+  - name: coverage.newCode.minimum
+    value: 90
+
+  # Complexity thresholds
+  - name: complexity.cyclomatic.maximum
+    value: 10
+  - name: complexity.cognitive.maximum
+    value: 15
+
+  # Duplication thresholds
+  - name: duplication.lines.maximum
+    value: 3
+  - name: duplication.blocks.maximum
+    value: 10
+
+  # Security thresholds
+  - name: security.vulnerabilities.critical
+    value: 0
+  - name: security.vulnerabilities.high
+    value: 0
+  - name: security.hotspots.reviewRequired
+    value: true
+
+  # Performance thresholds
+  - name: performance.buildTimeout.minutes
+    value: 30
+  - name: performance.testTimeout.minutes
+    value: 15
+
+  # Documentation thresholds
+  - name: docs.publicApi.required
+    value: true
+  - name: docs.coverage.minimum
+    value: 80

@@ -1,0 +1,144 @@
+# Reusable Lint Job
+# Supports: typescript, python, dotnet, sql, markdown, yaml, shell
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+      - sql
+      - markdown
+      - yaml
+      - shell
+      - multi  # Auto-detect multiple languages
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: configPath
+    type: string
+    default: ''  # Empty = use default from configs/
+
+  - name: configLevel
+    type: string
+    default: 'base'
+    values:
+      - relaxed
+      - base
+      - strict
+
+  - name: failOnWarning
+    type: boolean
+    default: false
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: Lint_${{ parameters.language }}
+    displayName: 'Lint (${{ parameters.language }})'
+    condition: and(${{ parameters.condition }}, eq(${{ parameters.enabled }}, true))
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      # TypeScript/JavaScript
+      - ${{ if or(eq(parameters.language, 'typescript'), eq(parameters.language, 'multi')) }}:
+        - task: NodeTool@0
+          displayName: 'Install Node.js'
+          inputs:
+            versionSpec: '$(tool.node.version)'
+
+        - script: npm ci
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            CONFIG_PATH="${{ parameters.configPath }}"
+            if [ -z "$CONFIG_PATH" ]; then
+              CONFIG_PATH="$(Build.SourcesDirectory)/.azure-pipelines/configs/eslint/${{ parameters.configLevel }}.js"
+            fi
+
+            ARGS="--ext .js,.ts,.tsx"
+            if [ "${{ parameters.failOnWarning }}" = "true" ]; then
+              ARGS="$ARGS --max-warnings 0"
+            fi
+
+            npx eslint src $ARGS --config "$CONFIG_PATH"
+          displayName: 'ESLint'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: npx prettier --check "src/**/*.{ts,tsx,js,json}"
+          displayName: 'Prettier check'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Python
+      - ${{ if or(eq(parameters.language, 'python'), eq(parameters.language, 'multi')) }}:
+        - task: UsePythonVersion@0
+          displayName: 'Use Python'
+          inputs:
+            versionSpec: '$(tool.python.version)'
+
+        - script: |
+            pip install ruff
+            CONFIG_PATH="${{ parameters.configPath }}"
+            if [ -z "$CONFIG_PATH" ]; then
+              CONFIG_PATH="$(Build.SourcesDirectory)/.azure-pipelines/configs/ruff/${{ parameters.configLevel }}.toml"
+            fi
+            ruff check src tests --config "$CONFIG_PATH"
+          displayName: 'Ruff lint'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: ruff format --check src tests
+          displayName: 'Ruff format check'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # .NET
+      - ${{ if or(eq(parameters.language, 'dotnet'), eq(parameters.language, 'multi')) }}:
+        - task: UseDotNet@2
+          displayName: 'Use .NET'
+          inputs:
+            version: '$(tool.dotnet.version)'
+
+        - script: dotnet format --verify-no-changes --verbosity diagnostic
+          displayName: 'dotnet format check'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # SQL
+      - ${{ if or(eq(parameters.language, 'sql'), eq(parameters.language, 'multi')) }}:
+        - script: |
+            pip install sqlfluff
+            sqlfluff lint . --dialect tsql
+          displayName: 'SQLFluff'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Markdown
+      - ${{ if or(eq(parameters.language, 'markdown'), eq(parameters.language, 'multi')) }}:
+        - script: |
+            npm install -g markdownlint-cli
+            markdownlint "**/*.md" --ignore node_modules
+          displayName: 'markdownlint'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # YAML
+      - ${{ if or(eq(parameters.language, 'yaml'), eq(parameters.language, 'multi')) }}:
+        - script: |
+            pip install yamllint
+            yamllint . -c .yamllint.yml || yamllint .
+          displayName: 'yamllint'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Shell
+      - ${{ if or(eq(parameters.language, 'shell'), eq(parameters.language, 'multi')) }}:
+        - script: |
+            find . -name "*.sh" -type f | xargs shellcheck || true
+            find . -name "*.bash" -type f | xargs shellcheck || true
+          displayName: 'shellcheck'
+          workingDirectory: ${{ parameters.workingDirectory }}

@@ -1,0 +1,208 @@
+# Reusable Test Job
+# Supports: typescript, python, dotnet
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: testType
+    type: string
+    default: 'unit'
+    values:
+      - unit
+      - integration
+      - e2e
+      - all
+
+  - name: coverageEnabled
+    type: boolean
+    default: true
+
+  - name: coverageThreshold
+    type: number
+    default: 90  # Overridable, defaults from thresholds.yml
+
+  - name: publishResults
+    type: boolean
+    default: true
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+  - name: timeoutMinutes
+    type: number
+    default: 15
+
+jobs:
+  - job: Test_${{ parameters.language }}_${{ parameters.testType }}
+    displayName: 'Test ${{ parameters.testType }} (${{ parameters.language }})'
+    condition: and(${{ parameters.condition }}, eq(${{ parameters.enabled }}, true))
+    timeoutInMinutes: ${{ parameters.timeoutMinutes }}
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      # TypeScript/JavaScript
+      - ${{ if eq(parameters.language, 'typescript') }}:
+        - task: NodeTool@0
+          displayName: 'Install Node.js'
+          inputs:
+            versionSpec: '$(tool.node.version)'
+
+        - task: Cache@2
+          displayName: 'Cache npm'
+          inputs:
+            key: 'npm | "$(Agent.OS)" | ${{ parameters.workingDirectory }}/package-lock.json'
+            path: $(npm_config_cache)
+
+        - script: npm ci
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            TEST_CMD="npm run test"
+            if [ "${{ parameters.testType }}" = "integration" ]; then
+              TEST_CMD="npm run test:integration"
+            elif [ "${{ parameters.testType }}" = "e2e" ]; then
+              TEST_CMD="npm run test:e2e"
+            elif [ "${{ parameters.testType }}" = "all" ]; then
+              TEST_CMD="npm run test:all"
+            fi
+
+            if [ "${{ parameters.coverageEnabled }}" = "true" ]; then
+              $TEST_CMD -- --coverage --reporters=default --reporters=jest-junit
+            else
+              $TEST_CMD -- --reporters=default --reporters=jest-junit
+            fi
+          displayName: 'Run tests'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - ${{ if eq(parameters.coverageEnabled, true) }}:
+          - script: |
+              COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+              echo "Coverage: $COVERAGE%"
+              echo "##vso[task.setvariable variable=coveragePercent]$COVERAGE"
+              if (( $(echo "$COVERAGE < ${{ parameters.coverageThreshold }}" | bc -l) )); then
+                echo "##vso[task.logissue type=error]Coverage $COVERAGE% is below threshold ${{ parameters.coverageThreshold }}%"
+                exit 1
+              fi
+            displayName: 'Coverage gate'
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Python
+      - ${{ if eq(parameters.language, 'python') }}:
+        - task: UsePythonVersion@0
+          displayName: 'Use Python'
+          inputs:
+            versionSpec: '$(tool.python.version)'
+
+        - task: Cache@2
+          displayName: 'Cache pip'
+          inputs:
+            key: 'pip | "$(Agent.OS)" | ${{ parameters.workingDirectory }}/pyproject.toml'
+            path: $(PIP_CACHE_DIR)
+
+        - script: |
+            pip install --upgrade pip
+            pip install -e ".[dev]"
+          displayName: 'Install dependencies'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            PYTEST_ARGS="--junitxml=coverage/junit.xml"
+
+            if [ "${{ parameters.testType }}" = "unit" ]; then
+              PYTEST_ARGS="$PYTEST_ARGS tests/unit"
+            elif [ "${{ parameters.testType }}" = "integration" ]; then
+              PYTEST_ARGS="$PYTEST_ARGS tests/integration"
+            elif [ "${{ parameters.testType }}" = "e2e" ]; then
+              PYTEST_ARGS="$PYTEST_ARGS tests/e2e"
+            else
+              PYTEST_ARGS="$PYTEST_ARGS tests"
+            fi
+
+            if [ "${{ parameters.coverageEnabled }}" = "true" ]; then
+              PYTEST_ARGS="$PYTEST_ARGS --cov=src --cov-report=xml --cov-report=html --cov-fail-under=${{ parameters.coverageThreshold }}"
+            fi
+
+            pytest $PYTEST_ARGS
+          displayName: 'Run tests'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # .NET
+      - ${{ if eq(parameters.language, 'dotnet') }}:
+        - task: UseDotNet@2
+          displayName: 'Use .NET'
+          inputs:
+            version: '$(tool.dotnet.version)'
+
+        - task: Cache@2
+          displayName: 'Cache NuGet'
+          inputs:
+            key: 'nuget | "$(Agent.OS)" | **/packages.lock.json'
+            path: $(NUGET_PACKAGES)
+
+        - script: dotnet restore
+          displayName: 'Restore'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: dotnet build --configuration Release --no-restore
+          displayName: 'Build'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+        - script: |
+            FILTER=""
+            if [ "${{ parameters.testType }}" = "unit" ]; then
+              FILTER="--filter Category=Unit"
+            elif [ "${{ parameters.testType }}" = "integration" ]; then
+              FILTER="--filter Category=Integration"
+            elif [ "${{ parameters.testType }}" = "e2e" ]; then
+              FILTER="--filter Category=E2E"
+            fi
+
+            dotnet test \
+              --configuration Release \
+              --no-build \
+              --collect:"XPlat Code Coverage" \
+              --logger trx \
+              --results-directory $(Build.SourcesDirectory)/TestResults \
+              $FILTER \
+              -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+          displayName: 'Run tests'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Publish results (all languages)
+      - ${{ if eq(parameters.publishResults, true) }}:
+        - task: PublishTestResults@2
+          displayName: 'Publish test results'
+          inputs:
+            testResultsFormat: ${{ if eq(parameters.language, 'dotnet') }}VSTest${{ else }}JUnit${{ endif }}
+            testResultsFiles: |
+              **/junit.xml
+              **/TestResults/**/*.trx
+            testRunTitle: '${{ parameters.testType }} Tests - ${{ parameters.language }}'
+            mergeTestResults: true
+          condition: always()
+
+        - ${{ if eq(parameters.coverageEnabled, true) }}:
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publish coverage'
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: |
+                **/cobertura-coverage.xml
+                **/coverage.cobertura.xml
+                **/coverage.xml
+            condition: always()

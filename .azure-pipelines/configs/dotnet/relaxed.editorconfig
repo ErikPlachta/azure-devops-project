@@ -1,0 +1,60 @@
+# .NET Relaxed EditorConfig
+# Lighter rules for internal tools, scripts, POCs
+
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{cs,csx}]
+# Naming conventions - suggestions only
+dotnet_naming_rule.public_members_must_be_pascal_case.symbols = public_symbols
+dotnet_naming_rule.public_members_must_be_pascal_case.style = pascal_case_style
+dotnet_naming_rule.public_members_must_be_pascal_case.severity = suggestion
+
+dotnet_naming_symbols.public_symbols.applicable_kinds = property,method,class
+dotnet_naming_symbols.public_symbols.applicable_accessibilities = public
+
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+# Code style - relaxed
+csharp_style_var_for_built_in_types = true:none
+csharp_style_var_when_type_is_apparent = true:none
+csharp_style_var_elsewhere = true:none
+
+csharp_prefer_braces = when_multiline:suggestion
+csharp_prefer_simple_using_statement = true:none
+
+# Null checking - suggestions
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+
+# Formatting
+csharp_new_line_before_open_brace = all
+csharp_indent_case_contents = true
+
+# Most analyzers as suggestions
+dotnet_analyzer_diagnostic.severity = suggestion
+
+# Keep critical security as warnings
+dotnet_diagnostic.CA2100.severity = warning  # SQL injection
+dotnet_diagnostic.CA5350.severity = warning  # Weak crypto
+dotnet_diagnostic.CA5351.severity = warning  # Broken crypto
+
+# Disable noisy rules
+dotnet_diagnostic.CS1591.severity = none  # Missing XML comment
+dotnet_diagnostic.CA1014.severity = none  # CLSCompliant
+dotnet_diagnostic.CA1062.severity = none  # Validate arguments
+dotnet_diagnostic.CA2007.severity = none  # ConfigureAwait
+dotnet_diagnostic.CA1822.severity = none  # Mark as static
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

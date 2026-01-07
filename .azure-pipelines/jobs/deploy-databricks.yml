@@ -1,0 +1,137 @@
+# Reusable Databricks Deployment Job
+# Deploys Asset Bundles with validation
+
+parameters:
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: bundleName
+    type: string
+    default: ''  # Auto-detect from databricks.yml
+
+  - name: databricksHost
+    type: string
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  - name: runValidationJob
+    type: boolean
+    default: true
+
+  - name: validationJobName
+    type: string
+    default: ''  # Auto: validation-job-{environment}
+
+  - name: validationTimeout
+    type: number
+    default: 600  # 10 minutes
+
+  - name: enabled
+    type: boolean
+    default: true
+
+jobs:
+  - deployment: Deploy_Databricks_${{ parameters.environment }}
+    displayName: 'Deploy to Databricks ${{ upper(parameters.environment) }}'
+    condition: eq(${{ parameters.enabled }}, true)
+    environment: 'barings-databricks-${{ parameters.environment }}'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - task: UsePythonVersion@0
+              displayName: 'Use Python'
+              inputs:
+                versionSpec: '$(tool.python.version)'
+
+            - script: pip install databricks-cli
+              displayName: 'Install Databricks CLI'
+
+            # Validate bundle
+            - script: |
+                databricks bundle validate -e ${{ parameters.environment }}
+              displayName: 'Validate bundle'
+              workingDirectory: ${{ parameters.workingDirectory }}
+              env:
+                DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                DATABRICKS_TOKEN: $(${{ parameters.databricksTokenVar }})
+
+            # Deploy bundle
+            - script: |
+                databricks bundle deploy -e ${{ parameters.environment }}
+              displayName: 'Deploy bundle'
+              workingDirectory: ${{ parameters.workingDirectory }}
+              env:
+                DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                DATABRICKS_TOKEN: $(${{ parameters.databricksTokenVar }})
+
+            # Run validation job
+            - ${{ if eq(parameters.runValidationJob, true) }}:
+              - script: |
+                  JOB_NAME="${{ coalesce(parameters.validationJobName, format('validation-job-{0}', parameters.environment)) }}"
+
+                  echo "Looking for validation job: $JOB_NAME"
+
+                  # Get job ID
+                  JOB_ID=$(databricks jobs list --output JSON | jq -r ".jobs[] | select(.settings.name==\"$JOB_NAME\") | .job_id" | head -1)
+
+                  if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
+                    echo "No validation job found, skipping validation"
+                    exit 0
+                  fi
+
+                  echo "Found job ID: $JOB_ID"
+
+                  # Trigger run
+                  RUN_RESPONSE=$(databricks jobs run-now --job-id $JOB_ID)
+                  RUN_ID=$(echo $RUN_RESPONSE | jq -r '.run_id')
+                  echo "Started run: $RUN_ID"
+
+                  # Wait for completion
+                  TIMEOUT=${{ parameters.validationTimeout }}
+                  ELAPSED=0
+
+                  while [ $ELAPSED -lt $TIMEOUT ]; do
+                    RUN_STATUS=$(databricks runs get --run-id $RUN_ID)
+                    LIFE_CYCLE=$(echo $RUN_STATUS | jq -r '.state.life_cycle_state')
+                    RESULT=$(echo $RUN_STATUS | jq -r '.state.result_state // "PENDING"')
+
+                    echo "Status: $LIFE_CYCLE / $RESULT (${ELAPSED}s elapsed)"
+
+                    if [ "$LIFE_CYCLE" = "TERMINATED" ]; then
+                      if [ "$RESULT" = "SUCCESS" ]; then
+                        echo "Validation job passed"
+                        exit 0
+                      else
+                        echo "##vso[task.logissue type=error]Validation job failed: $RESULT"
+                        # Get error details
+                        databricks runs get --run-id $RUN_ID | jq '.state'
+                        exit 1
+                      fi
+                    fi
+
+                    sleep 30
+                    ELAPSED=$((ELAPSED + 30))
+                  done
+
+                  echo "##vso[task.logissue type=error]Validation job timed out after ${TIMEOUT}s"
+                  exit 1
+                displayName: 'Run validation job'
+                workingDirectory: ${{ parameters.workingDirectory }}
+                env:
+                  DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                  DATABRICKS_TOKEN: $(${{ parameters.databricksTokenVar }})

@@ -1,0 +1,102 @@
+# CI Stage Template
+# Composes lint, test, scan jobs into CI stage
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: configLevel
+    type: string
+    default: 'base'
+    values:
+      - relaxed
+      - base
+      - strict
+
+  - name: coverageThreshold
+    type: number
+    default: 90
+
+  # Feature flags
+  - name: runLint
+    type: boolean
+    default: true
+
+  - name: runTests
+    type: boolean
+    default: true
+
+  - name: runSonar
+    type: boolean
+    default: true
+
+  - name: runDependencyScan
+    type: boolean
+    default: true
+
+  - name: runSecretScan
+    type: boolean
+    default: true
+
+  - name: buildArtifact
+    type: boolean
+    default: true
+
+stages:
+  - stage: CI
+    displayName: 'CI - Build & Test'
+    jobs:
+      # Lint job
+      - ${{ if eq(parameters.runLint, true) }}:
+        - template: ../jobs/lint.yml
+          parameters:
+            language: ${{ parameters.language }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            configLevel: ${{ parameters.configLevel }}
+
+      # Test job
+      - ${{ if eq(parameters.runTests, true) }}:
+        - template: ../jobs/test.yml
+          parameters:
+            language: ${{ parameters.language }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            coverageThreshold: ${{ parameters.coverageThreshold }}
+
+      # Build artifact job
+      - ${{ if eq(parameters.buildArtifact, true) }}:
+        - template: ../jobs/build-artifact.yml
+          parameters:
+            language: ${{ parameters.language }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+  - stage: Scan
+    displayName: 'Security Scanning'
+    dependsOn: CI
+    jobs:
+      # SonarCloud
+      - ${{ if eq(parameters.runSonar, true) }}:
+        - template: ../jobs/scan-sonar.yml
+          parameters:
+            language: ${{ parameters.language }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Dependency scan
+      - ${{ if eq(parameters.runDependencyScan, true) }}:
+        - template: ../jobs/scan-dependencies.yml
+          parameters:
+            language: ${{ parameters.language }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Secret scan
+      - ${{ if eq(parameters.runSecretScan, true) }}:
+        - template: ../jobs/scan-secrets.yml
+          parameters:
+            workingDirectory: ${{ parameters.workingDirectory }}

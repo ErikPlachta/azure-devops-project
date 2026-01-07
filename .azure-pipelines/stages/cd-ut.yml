@@ -1,0 +1,110 @@
+# CD Stage Template - UT (Development) Environment
+# Composes deployment jobs for UT environment
+
+parameters:
+  - name: deployTarget
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+
+  - name: dependsOn
+    type: object
+    default:
+      - Scan
+
+  # Environment naming
+  - name: environmentPrefix
+    type: string
+    default: 'barings'
+
+  # App Service params
+  - name: azureSubscription
+    type: string
+    default: 'barings-ut'
+
+  - name: appServiceName
+    type: string
+    default: ''
+
+  # Databricks params
+  - name: databricksHost
+    type: string
+    default: ''
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  # Power BI params
+  - name: workspaceId
+    type: string
+    default: ''
+
+  - name: datasetName
+    type: string
+    default: ''
+
+  # Smoke test config
+  - name: runSmokeTest
+    type: boolean
+    default: true
+
+stages:
+  - stage: Deploy_UT
+    displayName: 'Deploy to UT'
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+      )
+    jobs:
+      # App Service deployment
+      - ${{ if eq(parameters.deployTarget, 'appservice') }}:
+        - template: ../jobs/deploy-appservice.yml
+          parameters:
+            environment: ut
+            azureSubscription: ${{ parameters.azureSubscription }}
+            appServiceName: ${{ parameters.appServiceName }}
+            useSlot: false
+
+      # Databricks deployment
+      - ${{ if eq(parameters.deployTarget, 'databricks') }}:
+        - template: ../jobs/deploy-databricks.yml
+          parameters:
+            environment: ut
+            databricksHost: ${{ parameters.databricksHost }}
+            databricksTokenVar: ${{ parameters.databricksTokenVar }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+
+      # Power BI deployment
+      - ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+        - template: ../jobs/deploy-powerbi.yml
+          parameters:
+            environment: ut
+            azureSubscription: ${{ parameters.azureSubscription }}
+            workspaceId: ${{ parameters.workspaceId }}
+            datasetName: ${{ parameters.datasetName }}
+
+  # Smoke test stage
+  - ${{ if eq(parameters.runSmokeTest, true) }}:
+    - stage: SmokeTest_UT
+      displayName: 'Smoke Test UT'
+      dependsOn: Deploy_UT
+      jobs:
+        - template: ../jobs/smoke-test.yml
+          parameters:
+            targetType: ${{ parameters.deployTarget }}
+            environment: ut
+            ${{ if eq(parameters.deployTarget, 'appservice') }}:
+              appServiceUrl: 'https://${{ parameters.appServiceName }}.azurewebsites.net'
+            ${{ if eq(parameters.deployTarget, 'databricks') }}:
+              databricksHost: ${{ parameters.databricksHost }}
+            ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+              workspaceId: ${{ parameters.workspaceId }}

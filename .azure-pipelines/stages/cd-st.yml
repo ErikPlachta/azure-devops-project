@@ -1,0 +1,120 @@
+# CD Stage Template - ST (Staging) Environment
+# Composes deployment jobs for ST environment
+
+parameters:
+  - name: deployTarget
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+
+  - name: dependsOn
+    type: object
+    default:
+      - SmokeTest_UT
+
+  # Environment naming
+  - name: environmentPrefix
+    type: string
+    default: 'barings'
+
+  # App Service params
+  - name: azureSubscription
+    type: string
+    default: 'barings-st'
+
+  - name: appServiceName
+    type: string
+    default: ''
+
+  # Databricks params
+  - name: databricksHost
+    type: string
+    default: ''
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  # Power BI params
+  - name: workspaceId
+    type: string
+    default: ''
+
+  - name: datasetName
+    type: string
+    default: ''
+
+  # Smoke test config
+  - name: runSmokeTest
+    type: boolean
+    default: true
+
+  # Manual approval before ST
+  - name: requireApproval
+    type: boolean
+    default: false
+
+stages:
+  - stage: Deploy_ST
+    displayName: 'Deploy to ST'
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: |
+      and(
+        succeeded(),
+        or(
+          startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/main')
+        )
+      )
+    jobs:
+      # App Service deployment with staging slot
+      - ${{ if eq(parameters.deployTarget, 'appservice') }}:
+        - template: ../jobs/deploy-appservice.yml
+          parameters:
+            environment: st
+            azureSubscription: ${{ parameters.azureSubscription }}
+            appServiceName: ${{ parameters.appServiceName }}
+            useSlot: true
+            slotName: staging
+
+      # Databricks deployment
+      - ${{ if eq(parameters.deployTarget, 'databricks') }}:
+        - template: ../jobs/deploy-databricks.yml
+          parameters:
+            environment: st
+            databricksHost: ${{ parameters.databricksHost }}
+            databricksTokenVar: ${{ parameters.databricksTokenVar }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            runValidationJob: true
+
+      # Power BI deployment
+      - ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+        - template: ../jobs/deploy-powerbi.yml
+          parameters:
+            environment: st
+            azureSubscription: ${{ parameters.azureSubscription }}
+            workspaceId: ${{ parameters.workspaceId }}
+            datasetName: ${{ parameters.datasetName }}
+
+  # Smoke test stage
+  - ${{ if eq(parameters.runSmokeTest, true) }}:
+    - stage: SmokeTest_ST
+      displayName: 'Smoke Test ST'
+      dependsOn: Deploy_ST
+      jobs:
+        - template: ../jobs/smoke-test.yml
+          parameters:
+            targetType: ${{ parameters.deployTarget }}
+            environment: st
+            ${{ if eq(parameters.deployTarget, 'appservice') }}:
+              appServiceUrl: 'https://${{ parameters.appServiceName }}-staging.azurewebsites.net'
+            ${{ if eq(parameters.deployTarget, 'databricks') }}:
+              databricksHost: ${{ parameters.databricksHost }}
+            ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+              workspaceId: ${{ parameters.workspaceId }}

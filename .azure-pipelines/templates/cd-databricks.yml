@@ -1,0 +1,94 @@
+# Azure Databricks CD Template
+# Usage: extends this template from your azure-pipelines.yml
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+  - name: databricksHost
+    type: string
+  - name: runValidation
+    type: boolean
+    default: true
+
+stages:
+  - stage: Deploy_${{ parameters.environment }}
+    displayName: 'Deploy to Databricks ${{ upper(parameters.environment) }}'
+    jobs:
+      - deployment: DeployBundle
+        displayName: 'Deploy Asset Bundle'
+        environment: 'barings-databricks-${{ parameters.environment }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: UsePythonVersion@0
+                  displayName: 'Use Python 3.11'
+                  inputs:
+                    versionSpec: '3.11'
+
+                - script: |
+                    pip install databricks-cli
+                  displayName: 'Install Databricks CLI'
+
+                - script: |
+                    databricks bundle validate -e ${{ parameters.environment }}
+                  displayName: 'Validate bundle'
+                  workingDirectory: ${{ parameters.workingDirectory }}
+                  env:
+                    DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                    DATABRICKS_TOKEN: $(databricks-token)
+
+                - script: |
+                    databricks bundle deploy -e ${{ parameters.environment }}
+                  displayName: 'Deploy bundle'
+                  workingDirectory: ${{ parameters.workingDirectory }}
+                  env:
+                    DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                    DATABRICKS_TOKEN: $(databricks-token)
+
+                - ${{ if eq(parameters.runValidation, true) }}:
+                  - script: |
+                      # Run a validation job if defined
+                      JOB_NAME="validation-job-${{ parameters.environment }}"
+
+                      echo "Checking for validation job: $JOB_NAME"
+                      JOB_ID=$(databricks jobs list --output JSON | jq -r ".jobs[] | select(.settings.name==\"$JOB_NAME\") | .job_id")
+
+                      if [ -n "$JOB_ID" ]; then
+                        echo "Running validation job: $JOB_ID"
+                        RUN_ID=$(databricks jobs run-now --job-id $JOB_ID | jq -r '.run_id')
+
+                        # Wait for completion
+                        while true; do
+                          STATUS=$(databricks runs get --run-id $RUN_ID | jq -r '.state.life_cycle_state')
+                          if [ "$STATUS" = "TERMINATED" ]; then
+                            RESULT=$(databricks runs get --run-id $RUN_ID | jq -r '.state.result_state')
+                            if [ "$RESULT" = "SUCCESS" ]; then
+                              echo "Validation passed"
+                              exit 0
+                            else
+                              echo "##vso[task.logissue type=error]Validation failed: $RESULT"
+                              exit 1
+                            fi
+                          fi
+                          sleep 30
+                        done
+                      else
+                        echo "No validation job found, skipping"
+                      fi
+                    displayName: 'Run validation job'
+                    workingDirectory: ${{ parameters.workingDirectory }}
+                    env:
+                      DATABRICKS_HOST: ${{ parameters.databricksHost }}
+                      DATABRICKS_TOKEN: $(databricks-token)

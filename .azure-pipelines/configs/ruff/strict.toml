@@ -1,0 +1,82 @@
+# Ruff Strict Configuration
+# Maximum enforcement for production-critical code
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "D",      # pydocstyle
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific
+    "S",      # flake8-bandit (security)
+    "A",      # flake8-builtins
+    "COM",    # flake8-commas
+    "C90",    # mccabe complexity
+    "DTZ",    # flake8-datetimez
+    "EM",     # flake8-errmsg
+    "FA",     # flake8-future-annotations
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "G",      # flake8-logging-format
+    "INP",    # flake8-no-pep420
+    "PIE",    # flake8-pie
+    "T20",    # flake8-print (no print statements)
+    "PYI",    # flake8-pyi
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "SLF",    # flake8-self
+    "SLOT",   # flake8-slots
+    "TID",    # flake8-tidy-imports
+    "TCH",    # flake8-type-checking
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (commented code)
+    "PL",     # pylint
+    "TRY",    # tryceratops
+    "FLY",    # flynt
+    "PERF",   # perflint
+    "FURB",   # refurb
+    "LOG",    # flake8-logging
+]
+
+ignore = [
+    "D203",   # Conflicts with D211
+    "D213",   # Conflicts with D212
+    "COM812", # Conflicts with formatter
+    "ISC001", # Conflicts with formatter
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["D", "S101", "PLR2004", "ARG001"]
+"conftest.py" = ["D", "ARG001"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+known-first-party = ["src"]
+combine-as-imports = true
+required-imports = ["from __future__ import annotations"]
+
+[lint.mccabe]
+max-complexity = 8
+
+[lint.pylint]
+max-args = 5
+max-branches = 8
+max-returns = 3
+max-statements = 30
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true

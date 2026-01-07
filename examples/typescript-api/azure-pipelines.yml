@@ -1,0 +1,34 @@
+# TypeScript API Pipeline
+# Uses modular CI/CD template with App Service deployment
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    include:
+      - examples/typescript-api/**
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  - group: sonarcloud-barings
+  - name: workingDirectory
+    value: 'examples/typescript-api'
+
+# Full pipeline: CI → Scan → UT → ST → PR
+extends:
+  template: /.azure-pipelines/templates/ci-cd-full.yml
+  parameters:
+    language: typescript
+    deployTarget: appservice
+    workingDirectory: $(workingDirectory)
+    configLevel: strict  # Production API uses strict linting
+    coverageThreshold: 90
+    appServiceName: 'app-example-api'

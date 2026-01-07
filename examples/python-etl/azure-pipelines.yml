@@ -1,0 +1,37 @@
+# Python ETL Pipeline
+# Uses modular CI/CD template with Databricks deployment
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    include:
+      - examples/python-etl/**
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  - group: sonarcloud-barings
+  - group: databricks-barings
+  - name: workingDirectory
+    value: 'examples/python-etl'
+
+# Full pipeline: CI → Scan → UT → ST → PR
+extends:
+  template: /.azure-pipelines/templates/ci-cd-full.yml
+  parameters:
+    language: python
+    deployTarget: databricks
+    workingDirectory: $(workingDirectory)
+    configLevel: strict  # Production ETL uses strict rules
+    coverageThreshold: 90
+    databricksHostUT: $(databricks-host-ut)
+    databricksHostST: $(databricks-host-st)
+    databricksHostPR: $(databricks-host-pr)

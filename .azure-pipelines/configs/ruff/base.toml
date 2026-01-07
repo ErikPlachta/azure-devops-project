@@ -1,0 +1,43 @@
+# Ruff Base Configuration
+# Standard rules for production Python code
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "D",      # pydocstyle
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific
+]
+
+ignore = [
+    "D100",   # Missing module docstring (too noisy)
+    "D104",   # Missing public package docstring
+    "D203",   # Conflicts with D211
+    "D213",   # Conflicts with D212
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["D", "S101"]  # No docstrings in tests, allow assert
+"scripts/**/*.py" = ["D", "T20"] # Relaxed for scripts
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+known-first-party = ["src"]
+combine-as-imports = true
+
+[lint.mccabe]
+max-complexity = 10
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

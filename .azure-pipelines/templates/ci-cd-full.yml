@@ -1,0 +1,201 @@
+# Full CI/CD Orchestrator Template
+# Complete pipeline: CI → Scan → UT → ST → PR
+# Usage: extends this from project azure-pipelines.yml
+
+parameters:
+  # === REQUIRED ===
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+
+  - name: deployTarget
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+
+  # === COMMON ===
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: configLevel
+    type: string
+    default: 'base'
+    values:
+      - relaxed
+      - base
+      - strict
+
+  - name: coverageThreshold
+    type: number
+    default: 90
+
+  # === APP SERVICE ===
+  - name: appServiceName
+    type: string
+    default: ''
+
+  # === DATABRICKS ===
+  - name: databricksHostUT
+    type: string
+    default: ''
+
+  - name: databricksHostST
+    type: string
+    default: ''
+
+  - name: databricksHostPR
+    type: string
+    default: ''
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  # === POWER BI ===
+  - name: workspaceIdUT
+    type: string
+    default: ''
+
+  - name: workspaceIdST
+    type: string
+    default: ''
+
+  - name: workspaceIdPR
+    type: string
+    default: ''
+
+  - name: datasetName
+    type: string
+    default: ''
+
+  # === FEATURE FLAGS ===
+  - name: runLint
+    type: boolean
+    default: true
+
+  - name: runTests
+    type: boolean
+    default: true
+
+  - name: runSonar
+    type: boolean
+    default: true
+
+  - name: runDependencyScan
+    type: boolean
+    default: true
+
+  - name: runSecretScan
+    type: boolean
+    default: true
+
+  - name: buildArtifact
+    type: boolean
+    default: true
+
+  - name: runSmokeTest
+    type: boolean
+    default: true
+
+  - name: deployToUT
+    type: boolean
+    default: true
+
+  - name: deployToST
+    type: boolean
+    default: true
+
+  - name: deployToPR
+    type: boolean
+    default: true
+
+  # === ENVIRONMENT ===
+  - name: environmentPrefix
+    type: string
+    default: 'barings'
+
+stages:
+  # CI Stage
+  - template: ../stages/ci.yml
+    parameters:
+      language: ${{ parameters.language }}
+      workingDirectory: ${{ parameters.workingDirectory }}
+      configLevel: ${{ parameters.configLevel }}
+      coverageThreshold: ${{ parameters.coverageThreshold }}
+      runLint: ${{ parameters.runLint }}
+      runTests: ${{ parameters.runTests }}
+      runSonar: ${{ parameters.runSonar }}
+      runDependencyScan: ${{ parameters.runDependencyScan }}
+      runSecretScan: ${{ parameters.runSecretScan }}
+      buildArtifact: ${{ parameters.buildArtifact }}
+
+  # Deploy to UT (develop branch)
+  - ${{ if eq(parameters.deployToUT, true) }}:
+    - template: ../stages/cd-ut.yml
+      parameters:
+        deployTarget: ${{ parameters.deployTarget }}
+        dependsOn:
+          - Scan
+        environmentPrefix: ${{ parameters.environmentPrefix }}
+        workingDirectory: ${{ parameters.workingDirectory }}
+        runSmokeTest: ${{ parameters.runSmokeTest }}
+        ${{ if eq(parameters.deployTarget, 'appservice') }}:
+          appServiceName: ${{ parameters.appServiceName }}
+        ${{ if eq(parameters.deployTarget, 'databricks') }}:
+          databricksHost: ${{ parameters.databricksHostUT }}
+          databricksTokenVar: ${{ parameters.databricksTokenVar }}
+        ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+          workspaceId: ${{ parameters.workspaceIdUT }}
+          datasetName: ${{ parameters.datasetName }}
+
+  # Deploy to ST (release/* or main branch)
+  - ${{ if eq(parameters.deployToST, true) }}:
+    - template: ../stages/cd-st.yml
+      parameters:
+        deployTarget: ${{ parameters.deployTarget }}
+        dependsOn:
+          - ${{ if eq(parameters.deployToUT, true) }}:
+            - SmokeTest_UT
+          - ${{ if eq(parameters.deployToUT, false) }}:
+            - Scan
+        environmentPrefix: ${{ parameters.environmentPrefix }}
+        workingDirectory: ${{ parameters.workingDirectory }}
+        runSmokeTest: ${{ parameters.runSmokeTest }}
+        ${{ if eq(parameters.deployTarget, 'appservice') }}:
+          appServiceName: ${{ parameters.appServiceName }}
+        ${{ if eq(parameters.deployTarget, 'databricks') }}:
+          databricksHost: ${{ parameters.databricksHostST }}
+          databricksTokenVar: ${{ parameters.databricksTokenVar }}
+        ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+          workspaceId: ${{ parameters.workspaceIdST }}
+          datasetName: ${{ parameters.datasetName }}
+
+  # Deploy to PR (main branch only)
+  - ${{ if eq(parameters.deployToPR, true) }}:
+    - template: ../stages/cd-pr.yml
+      parameters:
+        deployTarget: ${{ parameters.deployTarget }}
+        dependsOn:
+          - ${{ if eq(parameters.deployToST, true) }}:
+            - SmokeTest_ST
+          - ${{ if and(eq(parameters.deployToST, false), eq(parameters.deployToUT, true)) }}:
+            - SmokeTest_UT
+          - ${{ if and(eq(parameters.deployToST, false), eq(parameters.deployToUT, false)) }}:
+            - Scan
+        environmentPrefix: ${{ parameters.environmentPrefix }}
+        workingDirectory: ${{ parameters.workingDirectory }}
+        runSmokeTest: ${{ parameters.runSmokeTest }}
+        ${{ if eq(parameters.deployTarget, 'appservice') }}:
+          appServiceName: ${{ parameters.appServiceName }}
+        ${{ if eq(parameters.deployTarget, 'databricks') }}:
+          databricksHost: ${{ parameters.databricksHostPR }}
+          databricksTokenVar: ${{ parameters.databricksTokenVar }}
+        ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+          workspaceId: ${{ parameters.workspaceIdPR }}
+          datasetName: ${{ parameters.datasetName }}

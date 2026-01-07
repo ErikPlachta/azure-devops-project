@@ -1,0 +1,149 @@
+# CD Promotion Orchestrator Template
+# For promoting existing artifacts between environments
+# Usage: trigger manually or via release pipeline
+
+parameters:
+  - name: deployTarget
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+
+  - name: sourceEnvironment
+    type: string
+    values:
+      - ut
+      - st
+
+  - name: targetEnvironment
+    type: string
+    values:
+      - st
+      - pr
+
+  # Build to promote
+  - name: sourceBuildId
+    type: string
+    default: ''  # Empty = use latest from source
+
+  # Environment naming
+  - name: environmentPrefix
+    type: string
+    default: 'barings'
+
+  # App Service params
+  - name: appServiceName
+    type: string
+    default: ''
+
+  # Databricks params
+  - name: databricksHost
+    type: string
+    default: ''
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  # Power BI params
+  - name: workspaceId
+    type: string
+    default: ''
+
+  - name: datasetName
+    type: string
+    default: ''
+
+  - name: runSmokeTest
+    type: boolean
+    default: true
+
+stages:
+  - stage: Promote_${{ parameters.targetEnvironment }}
+    displayName: 'Promote from ${{ upper(parameters.sourceEnvironment) }} to ${{ upper(parameters.targetEnvironment) }}'
+    jobs:
+      - job: DownloadArtifact
+        displayName: 'Download artifact from source'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - ${{ if ne(parameters.sourceBuildId, '') }}:
+            - task: DownloadBuildArtifacts@1
+              displayName: 'Download from build ${{ parameters.sourceBuildId }}'
+              inputs:
+                buildType: 'specific'
+                project: '$(System.TeamProject)'
+                pipeline: '$(Build.DefinitionName)'
+                buildVersionToDownload: 'specific'
+                buildId: ${{ parameters.sourceBuildId }}
+                downloadType: 'single'
+                artifactName: 'drop'
+                downloadPath: '$(Pipeline.Workspace)'
+
+          - ${{ if eq(parameters.sourceBuildId, '') }}:
+            - task: DownloadBuildArtifacts@1
+              displayName: 'Download latest artifact'
+              inputs:
+                buildType: 'specific'
+                project: '$(System.TeamProject)'
+                pipeline: '$(Build.DefinitionName)'
+                buildVersionToDownload: 'latest'
+                downloadType: 'single'
+                artifactName: 'drop'
+                downloadPath: '$(Pipeline.Workspace)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Re-publish for deployment'
+            inputs:
+              pathToPublish: '$(Pipeline.Workspace)/drop'
+              artifactName: 'drop'
+
+      # Deployment job
+      - ${{ if eq(parameters.deployTarget, 'appservice') }}:
+        - template: ../jobs/deploy-appservice.yml
+          parameters:
+            environment: ${{ parameters.targetEnvironment }}
+            azureSubscription: ${{ parameters.environmentPrefix }}-${{ parameters.targetEnvironment }}
+            appServiceName: ${{ parameters.appServiceName }}
+            useSlot: ${{ or(eq(parameters.targetEnvironment, 'st'), eq(parameters.targetEnvironment, 'pr')) }}
+            slotName: staging
+            swapAfterDeploy: ${{ eq(parameters.targetEnvironment, 'pr') }}
+
+      - ${{ if eq(parameters.deployTarget, 'databricks') }}:
+        - template: ../jobs/deploy-databricks.yml
+          parameters:
+            environment: ${{ parameters.targetEnvironment }}
+            databricksHost: ${{ parameters.databricksHost }}
+            databricksTokenVar: ${{ parameters.databricksTokenVar }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            runValidationJob: true
+
+      - ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+        - template: ../jobs/deploy-powerbi.yml
+          parameters:
+            environment: ${{ parameters.targetEnvironment }}
+            azureSubscription: ${{ parameters.environmentPrefix }}-${{ parameters.targetEnvironment }}
+            workspaceId: ${{ parameters.workspaceId }}
+            datasetName: ${{ parameters.datasetName }}
+
+  # Smoke test
+  - ${{ if eq(parameters.runSmokeTest, true) }}:
+    - stage: SmokeTest_${{ parameters.targetEnvironment }}
+      displayName: 'Smoke Test ${{ upper(parameters.targetEnvironment) }}'
+      dependsOn: Promote_${{ parameters.targetEnvironment }}
+      jobs:
+        - template: ../jobs/smoke-test.yml
+          parameters:
+            targetType: ${{ parameters.deployTarget }}
+            environment: ${{ parameters.targetEnvironment }}
+            ${{ if eq(parameters.deployTarget, 'appservice') }}:
+              appServiceUrl: 'https://${{ parameters.appServiceName }}.azurewebsites.net'
+            ${{ if eq(parameters.deployTarget, 'databricks') }}:
+              databricksHost: ${{ parameters.databricksHost }}
+            ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+              workspaceId: ${{ parameters.workspaceId }}

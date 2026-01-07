@@ -1,0 +1,113 @@
+# CD Stage Template - PR (Production) Environment
+# Composes deployment jobs for PR environment with slot swap
+
+parameters:
+  - name: deployTarget
+    type: string
+    values:
+      - appservice
+      - databricks
+      - powerbi
+
+  - name: dependsOn
+    type: object
+    default:
+      - SmokeTest_ST
+
+  # Environment naming
+  - name: environmentPrefix
+    type: string
+    default: 'barings'
+
+  # App Service params
+  - name: azureSubscription
+    type: string
+    default: 'barings-pr'
+
+  - name: appServiceName
+    type: string
+    default: ''
+
+  # Databricks params
+  - name: databricksHost
+    type: string
+    default: ''
+
+  - name: databricksTokenVar
+    type: string
+    default: 'databricks-token'
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  # Power BI params
+  - name: workspaceId
+    type: string
+    default: ''
+
+  - name: datasetName
+    type: string
+    default: ''
+
+  # Smoke test config
+  - name: runSmokeTest
+    type: boolean
+    default: true
+
+stages:
+  - stage: Deploy_PR
+    displayName: 'Deploy to PR (Production)'
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      # App Service deployment with blue-green slot swap
+      - ${{ if eq(parameters.deployTarget, 'appservice') }}:
+        - template: ../jobs/deploy-appservice.yml
+          parameters:
+            environment: pr
+            azureSubscription: ${{ parameters.azureSubscription }}
+            appServiceName: ${{ parameters.appServiceName }}
+            useSlot: true
+            slotName: staging
+            swapAfterDeploy: true
+
+      # Databricks deployment
+      - ${{ if eq(parameters.deployTarget, 'databricks') }}:
+        - template: ../jobs/deploy-databricks.yml
+          parameters:
+            environment: pr
+            databricksHost: ${{ parameters.databricksHost }}
+            databricksTokenVar: ${{ parameters.databricksTokenVar }}
+            workingDirectory: ${{ parameters.workingDirectory }}
+            runValidationJob: true
+
+      # Power BI deployment
+      - ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+        - template: ../jobs/deploy-powerbi.yml
+          parameters:
+            environment: pr
+            azureSubscription: ${{ parameters.azureSubscription }}
+            workspaceId: ${{ parameters.workspaceId }}
+            datasetName: ${{ parameters.datasetName }}
+
+  # Production smoke test
+  - ${{ if eq(parameters.runSmokeTest, true) }}:
+    - stage: SmokeTest_PR
+      displayName: 'Smoke Test PR'
+      dependsOn: Deploy_PR
+      jobs:
+        - template: ../jobs/smoke-test.yml
+          parameters:
+            targetType: ${{ parameters.deployTarget }}
+            environment: pr
+            ${{ if eq(parameters.deployTarget, 'appservice') }}:
+              appServiceUrl: 'https://${{ parameters.appServiceName }}.azurewebsites.net'
+            ${{ if eq(parameters.deployTarget, 'databricks') }}:
+              databricksHost: ${{ parameters.databricksHost }}
+            ${{ if eq(parameters.deployTarget, 'powerbi') }}:
+              workspaceId: ${{ parameters.workspaceId }}

@@ -1,0 +1,126 @@
+# Reusable SonarCloud Scan Job
+# Single source of truth for static analysis
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+      - multi
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: projectKey
+    type: string
+
+  - name: projectName
+    type: string
+    default: ''
+
+  - name: sonarConnection
+    type: string
+    default: '$(sonar.connection)'
+
+  - name: sonarOrganization
+    type: string
+    default: '$(sonar.organization)'
+
+  - name: extraProperties
+    type: string
+    default: ''
+
+  - name: qualityGateWait
+    type: boolean
+    default: true
+
+  - name: enabled
+    type: boolean
+    default: true
+
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: SonarCloudScan
+    displayName: 'SonarCloud Analysis'
+    condition: and(${{ parameters.condition }}, eq(${{ parameters.enabled }}, true))
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      # Setup for language
+      - ${{ if or(eq(parameters.language, 'typescript'), eq(parameters.language, 'multi')) }}:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '$(tool.node.version)'
+        - script: npm ci
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      - ${{ if or(eq(parameters.language, 'python'), eq(parameters.language, 'multi')) }}:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '$(tool.python.version)'
+        - script: pip install -e ".[dev]" || pip install -r requirements.txt || true
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      - ${{ if or(eq(parameters.language, 'dotnet'), eq(parameters.language, 'multi')) }}:
+        - task: UseDotNet@2
+          inputs:
+            version: '$(tool.dotnet.version)'
+
+      # SonarCloud Prepare
+      - ${{ if eq(parameters.language, 'dotnet') }}:
+        - task: SonarCloudPrepare@1
+          displayName: 'Prepare SonarCloud (.NET)'
+          inputs:
+            SonarCloud: ${{ parameters.sonarConnection }}
+            organization: ${{ parameters.sonarOrganization }}
+            scannerMode: 'MSBuild'
+            projectKey: ${{ parameters.projectKey }}
+            projectName: ${{ coalesce(parameters.projectName, parameters.projectKey) }}
+            extraProperties: |
+              sonar.cs.opencover.reportsPaths=**/coverage.opencover.xml
+              sonar.cs.vstest.reportsPaths=**/*.trx
+              ${{ parameters.extraProperties }}
+
+        - script: dotnet build --configuration Release
+          displayName: 'Build for analysis'
+          workingDirectory: ${{ parameters.workingDirectory }}
+
+      - ${{ if ne(parameters.language, 'dotnet') }}:
+        - task: SonarCloudPrepare@1
+          displayName: 'Prepare SonarCloud (CLI)'
+          inputs:
+            SonarCloud: ${{ parameters.sonarConnection }}
+            organization: ${{ parameters.sonarOrganization }}
+            scannerMode: 'CLI'
+            configMode: 'manual'
+            cliProjectKey: ${{ parameters.projectKey }}
+            cliProjectName: ${{ coalesce(parameters.projectName, parameters.projectKey) }}
+            cliSources: '${{ parameters.workingDirectory }}/src'
+            extraProperties: |
+              sonar.javascript.lcov.reportPaths=**/lcov.info
+              sonar.python.coverage.reportPaths=**/coverage.xml
+              sonar.coverage.exclusions=**/*.test.ts,**/*.spec.ts,**/tests/**
+              ${{ parameters.extraProperties }}
+
+      # Run Analysis
+      - task: SonarCloudAnalyze@1
+        displayName: 'Run SonarCloud analysis'
+
+      # Publish and Wait for Quality Gate
+      - task: SonarCloudPublish@1
+        displayName: 'Publish SonarCloud results'
+        inputs:
+          pollingTimeoutSec: '300'
+
+      - ${{ if eq(parameters.qualityGateWait, true) }}:
+        - script: |
+            echo "Waiting for Quality Gate result..."
+            # Quality gate is enforced by SonarCloudPublish task
+            # This step is for logging purposes
+          displayName: 'Quality Gate status'

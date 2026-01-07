@@ -1,0 +1,66 @@
+# CI-Only Orchestrator Template
+# For PRs and feature branches: lint, test, scan only
+# Usage: extends this from project azure-pipelines.yml
+
+parameters:
+  - name: language
+    type: string
+    values:
+      - typescript
+      - python
+      - dotnet
+
+  - name: workingDirectory
+    type: string
+    default: '.'
+
+  - name: configLevel
+    type: string
+    default: 'base'
+    values:
+      - relaxed
+      - base
+      - strict
+
+  - name: coverageThreshold
+    type: number
+    default: 90
+
+  # Feature flags
+  - name: runLint
+    type: boolean
+    default: true
+
+  - name: runTests
+    type: boolean
+    default: true
+
+  - name: runSonar
+    type: boolean
+    default: true
+
+  - name: runDependencyScan
+    type: boolean
+    default: true
+
+  - name: runSecretScan
+    type: boolean
+    default: true
+
+  - name: buildArtifact
+    type: boolean
+    default: false  # No artifact for PR builds
+
+stages:
+  - template: ../stages/ci.yml
+    parameters:
+      language: ${{ parameters.language }}
+      workingDirectory: ${{ parameters.workingDirectory }}
+      configLevel: ${{ parameters.configLevel }}
+      coverageThreshold: ${{ parameters.coverageThreshold }}
+      runLint: ${{ parameters.runLint }}
+      runTests: ${{ parameters.runTests }}
+      runSonar: ${{ parameters.runSonar }}
+      runDependencyScan: ${{ parameters.runDependencyScan }}
+      runSecretScan: ${{ parameters.runSecretScan }}
+      buildArtifact: ${{ parameters.buildArtifact }}

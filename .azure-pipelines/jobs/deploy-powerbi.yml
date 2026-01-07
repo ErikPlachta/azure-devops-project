@@ -1,0 +1,189 @@
+# Reusable Power BI Deployment Job
+# Deploys reports and triggers refresh
+
+parameters:
+  - name: environment
+    type: string
+    values:
+      - ut
+      - st
+      - pr
+
+  - name: azureSubscription
+    type: string
+
+  - name: workspaceId
+    type: string
+
+  - name: artifactName
+    type: string
+    default: 'drop'
+
+  - name: datasetName
+    type: string
+
+  - name: pbixFileName
+    type: string
+    default: ''  # Auto-detect *.pbix
+
+  - name: triggerRefresh
+    type: boolean
+    default: true
+
+  - name: refreshTimeout
+    type: number
+    default: 600  # 10 minutes
+
+  - name: enabled
+    type: boolean
+    default: true
+
+jobs:
+  - deployment: Deploy_PowerBI_${{ parameters.environment }}
+    displayName: 'Deploy to Power BI ${{ upper(parameters.environment) }}'
+    condition: eq(${{ parameters.enabled }}, true)
+    environment: 'barings-powerbi-${{ parameters.environment }}'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: current
+              artifact: ${{ parameters.artifactName }}
+
+            # Deploy PBIX
+            - task: AzurePowerShell@5
+              displayName: 'Deploy PBIX'
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                ScriptType: 'InlineScript'
+                azurePowerShellVersion: 'LatestVersion'
+                Inline: |
+                  # Get access token
+                  $token = (Get-AzAccessToken -ResourceUrl "https://analysis.windows.net/powerbi/api").Token
+                  $headers = @{
+                    Authorization = "Bearer $token"
+                  }
+
+                  $workspaceId = "${{ parameters.workspaceId }}"
+                  $datasetName = "${{ parameters.datasetName }}"
+
+                  # Find PBIX file
+                  $artifactPath = "$(Pipeline.Workspace)/${{ parameters.artifactName }}"
+                  $pbixFileName = "${{ parameters.pbixFileName }}"
+
+                  if ([string]::IsNullOrEmpty($pbixFileName)) {
+                    $pbixFile = Get-ChildItem -Path $artifactPath -Filter "*.pbix" | Select-Object -First 1
+                  } else {
+                    $pbixFile = Get-ChildItem -Path "$artifactPath/$pbixFileName"
+                  }
+
+                  if (-not $pbixFile) {
+                    Write-Error "No PBIX file found in artifact"
+                    exit 1
+                  }
+
+                  Write-Host "Deploying: $($pbixFile.FullName)"
+                  Write-Host "To workspace: $workspaceId"
+                  Write-Host "Dataset name: $datasetName"
+
+                  # Read file as bytes
+                  $fileBytes = [System.IO.File]::ReadAllBytes($pbixFile.FullName)
+
+                  # Import PBIX
+                  $importUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/imports?datasetDisplayName=$datasetName&nameConflict=CreateOrOverwrite"
+
+                  try {
+                    $response = Invoke-RestMethod -Uri $importUrl -Method Post -Headers $headers -Body $fileBytes -ContentType "application/octet-stream"
+                    Write-Host "Import initiated: $($response.id)"
+
+                    # Wait for import to complete
+                    $importId = $response.id
+                    $maxWait = 300
+                    $elapsed = 0
+
+                    while ($elapsed -lt $maxWait) {
+                      Start-Sleep -Seconds 10
+                      $elapsed += 10
+
+                      $statusUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/imports/$importId"
+                      $status = Invoke-RestMethod -Uri $statusUrl -Headers $headers
+
+                      Write-Host "Import status: $($status.importState)"
+
+                      if ($status.importState -eq "Succeeded") {
+                        Write-Host "Import completed successfully"
+                        break
+                      } elseif ($status.importState -eq "Failed") {
+                        Write-Error "Import failed"
+                        exit 1
+                      }
+                    }
+                  } catch {
+                    Write-Error "Import failed: $_"
+                    exit 1
+                  }
+
+            # Trigger refresh
+            - ${{ if eq(parameters.triggerRefresh, true) }}:
+              - task: AzurePowerShell@5
+                displayName: 'Trigger Dataset Refresh'
+                inputs:
+                  azureSubscription: ${{ parameters.azureSubscription }}
+                  ScriptType: 'InlineScript'
+                  azurePowerShellVersion: 'LatestVersion'
+                  Inline: |
+                    $token = (Get-AzAccessToken -ResourceUrl "https://analysis.windows.net/powerbi/api").Token
+                    $headers = @{ Authorization = "Bearer $token" }
+
+                    $workspaceId = "${{ parameters.workspaceId }}"
+                    $datasetName = "${{ parameters.datasetName }}"
+
+                    # Get dataset ID
+                    $datasetsUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/datasets"
+                    $datasets = Invoke-RestMethod -Uri $datasetsUrl -Headers $headers
+                    $dataset = $datasets.value | Where-Object { $_.name -eq $datasetName }
+
+                    if (-not $dataset) {
+                      Write-Error "Dataset not found: $datasetName"
+                      exit 1
+                    }
+
+                    $datasetId = $dataset.id
+                    Write-Host "Found dataset: $datasetId"
+
+                    # Trigger refresh
+                    $refreshUrl = "https://api.powerbi.com/v1.0/myorg/groups/$workspaceId/datasets/$datasetId/refreshes"
+                    try {
+                      Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
+                      Write-Host "Refresh triggered"
+                    } catch {
+                      Write-Error "Failed to trigger refresh: $_"
+                      exit 1
+                    }
+
+                    # Wait for refresh completion
+                    $timeout = ${{ parameters.refreshTimeout }}
+                    $elapsed = 0
+
+                    while ($elapsed -lt $timeout) {
+                      Start-Sleep -Seconds 30
+                      $elapsed += 30
+
+                      $refreshes = Invoke-RestMethod -Uri $refreshUrl -Headers $headers
+                      $latest = $refreshes.value | Select-Object -First 1
+
+                      Write-Host "Refresh status: $($latest.status) (${elapsed}s elapsed)"
+
+                      if ($latest.status -eq "Completed") {
+                        Write-Host "Refresh completed successfully"
+                        exit 0
+                      } elseif ($latest.status -eq "Failed") {
+                        Write-Error "Refresh failed: $($latest.serviceExceptionJson)"
+                        exit 1
+                      }
+                    }
+
+                    Write-Error "Refresh timed out after ${timeout}s"
+                    exit 1
