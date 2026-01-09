@@ -1,0 +1,582 @@
+# Scan and Update Azure DevOps Work Items
+# Queries work items with filters, optionally updates them based on conditions
+
+parameters:
+  # Required
+  - name: organizationUrl
+    type: string
+    displayName: 'Azure DevOps organization URL (https://dev.azure.com/MyOrg)'
+  - name: projectName
+    type: string
+    displayName: 'Project name to query'
+  - name: azureSubscription
+    type: string
+    displayName: 'Azure service connection for CLI auth'
+
+  # Sprint/Iteration
+  - name: sprint
+    type: string
+    default: '@CurrentIteration'
+    displayName: 'Sprint filter (@CurrentIteration, Sprint 1, etc.)'
+  - name: areaPath
+    type: string
+    default: ''
+    displayName: 'Area path filter'
+
+  # Team/Assignment
+  - name: teamName
+    type: string
+    default: ''
+    displayName: 'Team name filter'
+  - name: assignedTo
+    type: string
+    default: ''
+    displayName: 'Assigned to filter'
+
+  # Work Item Filters
+  - name: workItemTypes
+    type: object
+    default:
+      - 'User Story'
+    displayName: 'Work item types to include'
+  - name: states
+    type: object
+    default:
+      - 'New'
+      - 'Active'
+    displayName: 'States to include'
+  - name: tags
+    type: object
+    default: []
+    displayName: 'Tag filters (match any)'
+  - name: priority
+    type: string
+    default: ''
+    displayName: 'Priority filter (1, 2, 3, 4)'
+
+  # Date Filters
+  - name: createdAfter
+    type: string
+    default: ''
+    displayName: 'Created after date (YYYY-MM-DD)'
+  - name: modifiedAfter
+    type: string
+    default: ''
+    displayName: 'Modified after date (YYYY-MM-DD)'
+
+  # === UPDATE OPERATIONS ===
+  - name: enableUpdates
+    type: boolean
+    default: false
+    displayName: 'Enable work item updates'
+
+  # Condition-based updates
+  - name: updateCondition
+    type: string
+    default: ''
+    displayName: 'jq filter for items to update (e.g., select(.fields["System.State"] == "Active"))'
+
+  # Update actions
+  - name: addTags
+    type: object
+    default: []
+    displayName: 'Tags to add to matching items'
+  - name: removeTags
+    type: object
+    default: []
+    displayName: 'Tags to remove from matching items'
+  - name: setState
+    type: string
+    default: ''
+    displayName: 'Set state (New, Active, Resolved, Closed)'
+  - name: setAssignedTo
+    type: string
+    default: ''
+    displayName: 'Set assigned to (email)'
+  - name: setPriority
+    type: string
+    default: ''
+    displayName: 'Set priority (1-4)'
+  - name: addComment
+    type: string
+    default: ''
+    displayName: 'Add comment/discussion to items'
+  - name: setCustomField
+    type: object
+    default: {}
+    displayName: 'Custom field updates (field: value)'
+
+  # Attachment
+  - name: attachFile
+    type: string
+    default: ''
+    displayName: 'File path to attach to items'
+  - name: attachmentComment
+    type: string
+    default: 'Attached by pipeline'
+    displayName: 'Comment for attachment'
+
+  # Dry run mode
+  - name: dryRun
+    type: boolean
+    default: true
+    displayName: 'Dry run (log changes without applying)'
+
+  # Output Options
+  - name: outputFormat
+    type: string
+    default: 'json'
+    values:
+      - json
+      - csv
+      - markdown
+    displayName: 'Output format'
+  - name: publishArtifact
+    type: boolean
+    default: true
+    displayName: 'Publish results as artifact'
+  - name: artifactName
+    type: string
+    default: 'work-items-report'
+    displayName: 'Artifact name'
+
+  # Notifications
+  - name: sendTeamsNotification
+    type: boolean
+    default: false
+    displayName: 'Send Teams notification'
+  - name: teamsWebhookUrl
+    type: string
+    default: ''
+    displayName: 'Teams webhook URL'
+
+  # Job configuration
+  - name: pool
+    type: object
+    default:
+      vmImage: 'ubuntu-latest'
+  - name: dependsOn
+    type: object
+    default: []
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: ScanWorkItems
+    displayName: 'Scan Azure DevOps Work Items'
+    pool: ${{ parameters.pool }}
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: ${{ parameters.condition }}
+    variables:
+      outputFile: 'work-items.${{ parameters.outputFormat }}'
+    steps:
+      - checkout: none
+
+      - task: AzureCLI@2
+        displayName: 'Query Work Items'
+        inputs:
+          azureSubscription: '${{ parameters.azureSubscription }}'
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            set -e
+
+            # Configure Azure DevOps CLI
+            az extension add --name azure-devops --only-show-errors 2>/dev/null || true
+            az devops configure --defaults organization="${{ parameters.organizationUrl }}" project="${{ parameters.projectName }}"
+
+            # Build WIQL query
+            WIQL="SELECT [System.Id], [System.Title], [System.State], [System.AssignedTo], [System.IterationPath], [System.AreaPath], [System.Tags], [System.CreatedDate], [System.ChangedDate], [Microsoft.VSTS.Common.Priority], [Microsoft.VSTS.Scheduling.StoryPoints] FROM WorkItems WHERE "
+
+            # Work Item Types
+            TYPES='${{ join(',', parameters.workItemTypes) }}'
+            TYPE_CLAUSE=""
+            IFS=',' read -ra TYPE_ARR <<< "$TYPES"
+            for i in "${!TYPE_ARR[@]}"; do
+              if [ $i -eq 0 ]; then
+                TYPE_CLAUSE="[System.WorkItemType] = '${TYPE_ARR[$i]}'"
+              else
+                TYPE_CLAUSE="$TYPE_CLAUSE OR [System.WorkItemType] = '${TYPE_ARR[$i]}'"
+              fi
+            done
+            WIQL="$WIQL ($TYPE_CLAUSE)"
+
+            # States
+            STATES='${{ join(',', parameters.states) }}'
+            STATE_CLAUSE=""
+            IFS=',' read -ra STATE_ARR <<< "$STATES"
+            for i in "${!STATE_ARR[@]}"; do
+              if [ $i -eq 0 ]; then
+                STATE_CLAUSE="[System.State] = '${STATE_ARR[$i]}'"
+              else
+                STATE_CLAUSE="$STATE_CLAUSE OR [System.State] = '${STATE_ARR[$i]}'"
+              fi
+            done
+            WIQL="$WIQL AND ($STATE_CLAUSE)"
+
+            # Sprint/Iteration
+            SPRINT='${{ parameters.sprint }}'
+            if [ -n "$SPRINT" ]; then
+              WIQL="$WIQL AND [System.IterationPath] UNDER '${{ parameters.projectName }}\\$SPRINT'"
+            fi
+
+            # Area Path
+            AREA='${{ parameters.areaPath }}'
+            if [ -n "$AREA" ]; then
+              WIQL="$WIQL AND [System.AreaPath] UNDER '$AREA'"
+            fi
+
+            # Assigned To
+            ASSIGNED='${{ parameters.assignedTo }}'
+            if [ -n "$ASSIGNED" ]; then
+              WIQL="$WIQL AND [System.AssignedTo] = '$ASSIGNED'"
+            fi
+
+            # Priority
+            PRIORITY='${{ parameters.priority }}'
+            if [ -n "$PRIORITY" ]; then
+              WIQL="$WIQL AND [Microsoft.VSTS.Common.Priority] = $PRIORITY"
+            fi
+
+            # Created After
+            CREATED='${{ parameters.createdAfter }}'
+            if [ -n "$CREATED" ]; then
+              WIQL="$WIQL AND [System.CreatedDate] >= '$CREATED'"
+            fi
+
+            # Modified After
+            MODIFIED='${{ parameters.modifiedAfter }}'
+            if [ -n "$MODIFIED" ]; then
+              WIQL="$WIQL AND [System.ChangedDate] >= '$MODIFIED'"
+            fi
+
+            # Tags
+            TAGS='${{ join(',', parameters.tags) }}'
+            if [ -n "$TAGS" ]; then
+              TAG_CLAUSE=""
+              IFS=',' read -ra TAG_ARR <<< "$TAGS"
+              for i in "${!TAG_ARR[@]}"; do
+                if [ $i -eq 0 ]; then
+                  TAG_CLAUSE="[System.Tags] CONTAINS '${TAG_ARR[$i]}'"
+                else
+                  TAG_CLAUSE="$TAG_CLAUSE OR [System.Tags] CONTAINS '${TAG_ARR[$i]}'"
+                fi
+              done
+              WIQL="$WIQL AND ($TAG_CLAUSE)"
+            fi
+
+            WIQL="$WIQL ORDER BY [System.ChangedDate] DESC"
+
+            echo "##[section]WIQL Query:"
+            echo "$WIQL"
+            echo ""
+
+            # Execute query
+            echo "##[section]Executing query..."
+            RESULT=$(az boards query --wiql "$WIQL" --output json 2>&1) || {
+              echo "##vso[task.logissue type=error]Query failed: $RESULT"
+              exit 1
+            }
+
+            COUNT=$(echo "$RESULT" | jq '. | length')
+            echo "##[section]Found $COUNT work items"
+
+            # Save raw JSON
+            echo "$RESULT" > work-items.json
+            echo "##vso[task.setvariable variable=workItemCount]$COUNT"
+
+      # Update Work Items (if enabled)
+      - ${{ if eq(parameters.enableUpdates, true) }}:
+        - task: AzureCLI@2
+          displayName: 'Update Work Items${{ if eq(parameters.dryRun, true) }} (Dry Run)${{ else }}${{ endif }}'
+          inputs:
+            azureSubscription: '${{ parameters.azureSubscription }}'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              set -e
+
+              az extension add --name azure-devops --only-show-errors 2>/dev/null || true
+              az devops configure --defaults organization="${{ parameters.organizationUrl }}" project="${{ parameters.projectName }}"
+
+              DRY_RUN="${{ parameters.dryRun }}"
+              CONDITION='${{ parameters.updateCondition }}'
+
+              # Filter items based on condition
+              if [ -n "$CONDITION" ]; then
+                ITEMS=$(cat work-items.json | jq "[ .[] | $CONDITION ]")
+              else
+                ITEMS=$(cat work-items.json)
+              fi
+
+              UPDATE_COUNT=$(echo "$ITEMS" | jq '. | length')
+              echo "##[section]Items matching update condition: $UPDATE_COUNT"
+
+              if [ "$UPDATE_COUNT" -eq 0 ]; then
+                echo "No items to update"
+                exit 0
+              fi
+
+              # Get IDs
+              IDS=$(echo "$ITEMS" | jq -r '.[].id')
+
+              UPDATED=0
+              FAILED=0
+
+              for ID in $IDS; do
+                echo ""
+                echo "##[section]Processing Work Item #$ID"
+
+                # Build update fields
+                FIELDS=""
+
+                # Add Tags
+                ADD_TAGS='${{ join(';', parameters.addTags) }}'
+                if [ -n "$ADD_TAGS" ]; then
+                  CURRENT_TAGS=$(echo "$ITEMS" | jq -r ".[] | select(.id == $ID) | .fields[\"System.Tags\"] // \"\"")
+                  if [ -n "$CURRENT_TAGS" ]; then
+                    NEW_TAGS="$CURRENT_TAGS; $ADD_TAGS"
+                  else
+                    NEW_TAGS="$ADD_TAGS"
+                  fi
+                  FIELDS="$FIELDS System.Tags=$NEW_TAGS"
+                  echo "  Adding tags: $ADD_TAGS"
+                fi
+
+                # Remove Tags
+                REMOVE_TAGS='${{ join(';', parameters.removeTags) }}'
+                if [ -n "$REMOVE_TAGS" ]; then
+                  CURRENT_TAGS=$(echo "$ITEMS" | jq -r ".[] | select(.id == $ID) | .fields[\"System.Tags\"] // \"\"")
+                  IFS=';' read -ra REMOVE_ARR <<< "$REMOVE_TAGS"
+                  for tag in "${REMOVE_ARR[@]}"; do
+                    tag=$(echo "$tag" | xargs)  # trim
+                    CURRENT_TAGS=$(echo "$CURRENT_TAGS" | sed "s/; *$tag//g; s/$tag; *//g; s/^$tag$//g")
+                  done
+                  FIELDS="$FIELDS System.Tags=$CURRENT_TAGS"
+                  echo "  Removing tags: $REMOVE_TAGS"
+                fi
+
+                # Set State
+                SET_STATE='${{ parameters.setState }}'
+                if [ -n "$SET_STATE" ]; then
+                  FIELDS="$FIELDS System.State=$SET_STATE"
+                  echo "  Setting state: $SET_STATE"
+                fi
+
+                # Set Assigned To
+                SET_ASSIGNED='${{ parameters.setAssignedTo }}'
+                if [ -n "$SET_ASSIGNED" ]; then
+                  FIELDS="$FIELDS System.AssignedTo=$SET_ASSIGNED"
+                  echo "  Setting assigned to: $SET_ASSIGNED"
+                fi
+
+                # Set Priority
+                SET_PRIORITY='${{ parameters.setPriority }}'
+                if [ -n "$SET_PRIORITY" ]; then
+                  FIELDS="$FIELDS Microsoft.VSTS.Common.Priority=$SET_PRIORITY"
+                  echo "  Setting priority: $SET_PRIORITY"
+                fi
+
+                # Apply updates
+                if [ -n "$FIELDS" ]; then
+                  if [ "$DRY_RUN" = "true" ] || [ "$DRY_RUN" = "True" ]; then
+                    echo "  [DRY RUN] Would update: $FIELDS"
+                  else
+                    if az boards work-item update --id "$ID" --fields $FIELDS --output none; then
+                      echo "  Updated successfully"
+                      UPDATED=$((UPDATED + 1))
+                    else
+                      echo "##vso[task.logissue type=warning]Failed to update work item #$ID"
+                      FAILED=$((FAILED + 1))
+                    fi
+                  fi
+                fi
+
+                # Add Comment
+                COMMENT='${{ parameters.addComment }}'
+                if [ -n "$COMMENT" ]; then
+                  if [ "$DRY_RUN" = "true" ] || [ "$DRY_RUN" = "True" ]; then
+                    echo "  [DRY RUN] Would add comment: $COMMENT"
+                  else
+                    if az boards work-item update --id "$ID" --discussion "$COMMENT" --output none; then
+                      echo "  Added comment"
+                    else
+                      echo "##vso[task.logissue type=warning]Failed to add comment to #$ID"
+                    fi
+                  fi
+                fi
+              done
+
+              echo ""
+              echo "##[section]Update Summary"
+              echo "  Total processed: $UPDATE_COUNT"
+              if [ "$DRY_RUN" = "true" ] || [ "$DRY_RUN" = "True" ]; then
+                echo "  Mode: DRY RUN (no changes applied)"
+              else
+                echo "  Updated: $UPDATED"
+                echo "  Failed: $FAILED"
+              fi
+
+              # Save update log
+              echo "{\"processed\": $UPDATE_COUNT, \"updated\": $UPDATED, \"failed\": $FAILED, \"dryRun\": $DRY_RUN}" > update-log.json
+
+      # Attach files (if specified)
+      - ${{ if ne(parameters.attachFile, '') }}:
+        - task: AzureCLI@2
+          displayName: 'Attach Files to Work Items'
+          inputs:
+            azureSubscription: '${{ parameters.azureSubscription }}'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              set -e
+
+              az extension add --name azure-devops --only-show-errors 2>/dev/null || true
+              az devops configure --defaults organization="${{ parameters.organizationUrl }}" project="${{ parameters.projectName }}"
+
+              FILE_PATH='${{ parameters.attachFile }}'
+              COMMENT='${{ parameters.attachmentComment }}'
+              DRY_RUN="${{ parameters.dryRun }}"
+
+              if [ ! -f "$FILE_PATH" ]; then
+                echo "##vso[task.logissue type=error]Attachment file not found: $FILE_PATH"
+                exit 1
+              fi
+
+              # Filter items if condition specified
+              CONDITION='${{ parameters.updateCondition }}'
+              if [ -n "$CONDITION" ]; then
+                ITEMS=$(cat work-items.json | jq "[ .[] | $CONDITION ]")
+              else
+                ITEMS=$(cat work-items.json)
+              fi
+
+              IDS=$(echo "$ITEMS" | jq -r '.[].id')
+
+              for ID in $IDS; do
+                echo "Attaching to Work Item #$ID"
+                if [ "$DRY_RUN" = "true" ] || [ "$DRY_RUN" = "True" ]; then
+                  echo "  [DRY RUN] Would attach: $FILE_PATH"
+                else
+                  # Upload attachment
+                  UPLOAD_RESULT=$(az devops invoke --area wit --resource attachments --route-parameters project="${{ parameters.projectName }}" --http-method POST --in-file "$FILE_PATH" --query url -o tsv)
+
+                  if [ -n "$UPLOAD_RESULT" ]; then
+                    # Link attachment to work item
+                    az boards work-item relation add --id "$ID" --relation-type "AttachedFile" --target-url "$UPLOAD_RESULT" --output none
+                    echo "  Attached successfully"
+                  else
+                    echo "##vso[task.logissue type=warning]Failed to attach file to #$ID"
+                  fi
+                fi
+              done
+
+      # Format output
+      - script: |
+          set -e
+          COUNT=$(cat work-items.json | jq '. | length')
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No work items found matching criteria"
+            echo "[]" > $(outputFile)
+            exit 0
+          fi
+
+          FORMAT="${{ parameters.outputFormat }}"
+
+          if [ "$FORMAT" = "csv" ]; then
+            echo "ID,Title,State,AssignedTo,Iteration,Area,Priority,StoryPoints,Tags,Created,Modified" > work-items.csv
+            cat work-items.json | jq -r '.[] | [
+              .fields["System.Id"] // "",
+              (.fields["System.Title"] // "" | gsub(","; " ")),
+              .fields["System.State"] // "",
+              (.fields["System.AssignedTo"].displayName // "Unassigned"),
+              .fields["System.IterationPath"] // "",
+              .fields["System.AreaPath"] // "",
+              (.fields["Microsoft.VSTS.Common.Priority"] // "" | tostring),
+              (.fields["Microsoft.VSTS.Scheduling.StoryPoints"] // "" | tostring),
+              (.fields["System.Tags"] // "" | gsub(","; ";")),
+              .fields["System.CreatedDate"] // "",
+              .fields["System.ChangedDate"] // ""
+            ] | @csv' >> work-items.csv
+            echo "Generated work-items.csv"
+
+          elif [ "$FORMAT" = "markdown" ]; then
+            {
+              echo "# Work Items Report"
+              echo ""
+              echo "**Generated:** $(date -u +"%Y-%m-%d %H:%M UTC")"
+              echo "**Project:** ${{ parameters.projectName }}"
+              echo "**Sprint:** ${{ parameters.sprint }}"
+              echo "**Count:** $COUNT"
+              echo ""
+              echo "| ID | Title | State | Assigned To | Priority | Points |"
+              echo "|----:|-------|-------|-------------|:--------:|-------:|"
+
+              cat work-items.json | jq -r '.[] | "| \(.fields["System.Id"]) | \(.fields["System.Title"] // "-" | .[0:50]) | \(.fields["System.State"] // "-") | \(.fields["System.AssignedTo"].displayName // "Unassigned") | \(.fields["Microsoft.VSTS.Common.Priority"] // "-") | \(.fields["Microsoft.VSTS.Scheduling.StoryPoints"] // "-") |"'
+
+              echo ""
+              echo "---"
+              echo "*Report generated by Azure DevOps Pipeline*"
+            } > work-items.md
+            echo "Generated work-items.md"
+
+          else
+            echo "Using work-items.json"
+          fi
+        displayName: 'Format Output (${{ parameters.outputFormat }})'
+
+      # Teams notification
+      - ${{ if eq(parameters.sendTeamsNotification, true) }}:
+        - script: |
+            set -e
+            COUNT=$(cat work-items.json | jq '. | length')
+            UPDATES_ENABLED="${{ parameters.enableUpdates }}"
+
+            # Build summary
+            if [ "$COUNT" -gt 0 ]; then
+              TOP_ITEMS=$(cat work-items.json | jq -r '.[0:5] | .[] | "- **\(.fields["System.Id"])**: \(.fields["System.Title"] | .[0:60]) (\(.fields["System.State"]))"')
+              SUMMARY="$TOP_ITEMS"
+              if [ "$COUNT" -gt 5 ]; then
+                SUMMARY="$SUMMARY\n\n*...and $((COUNT - 5)) more*"
+              fi
+            else
+              SUMMARY="No work items found matching the criteria."
+            fi
+
+            # Add update info if enabled
+            if [ "$UPDATES_ENABLED" = "true" ] && [ -f "update-log.json" ]; then
+              UPDATE_INFO=$(cat update-log.json | jq -r '"Updated: \(.updated), Failed: \(.failed)"')
+              SUMMARY="$SUMMARY\n\n**Updates:** $UPDATE_INFO"
+            fi
+
+            curl -H "Content-Type: application/json" -d "{
+              \"@type\": \"MessageCard\",
+              \"@context\": \"http://schema.org/extensions\",
+              \"themeColor\": \"0076D7\",
+              \"summary\": \"Work Items Report\",
+              \"sections\": [{
+                \"activityTitle\": \"Work Items Report - ${{ parameters.projectName }}\",
+                \"activitySubtitle\": \"Sprint: ${{ parameters.sprint }}\",
+                \"facts\": [{
+                  \"name\": \"Total Items\",
+                  \"value\": \"$COUNT\"
+                }, {
+                  \"name\": \"Generated\",
+                  \"value\": \"$(date -u +"%Y-%m-%d %H:%M UTC")\"
+                }],
+                \"markdown\": true,
+                \"text\": \"$SUMMARY\"
+              }]
+            }" "${{ parameters.teamsWebhookUrl }}"
+          displayName: 'Send Teams Notification'
+          condition: and(succeeded(), ne('${{ parameters.teamsWebhookUrl }}', ''))
+
+      # Publish artifact
+      - ${{ if eq(parameters.publishArtifact, true) }}:
+        - task: PublishBuildArtifacts@1
+          displayName: 'Publish Work Items Report'
+          inputs:
+            pathToPublish: '$(outputFile)'
+            artifactName: '${{ parameters.artifactName }}'

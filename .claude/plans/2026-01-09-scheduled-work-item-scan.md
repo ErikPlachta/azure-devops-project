@@ -1,141 +1,143 @@
 # Scheduled Work Item Scan Jobs - 2026-01-09
 
 ## Overview
-Create scheduled pipeline job that scans Azure DevOps Work Items within a specified Project with configurable filters.
 
-## Proposed Architecture
+Created scheduled pipeline job that scans Azure DevOps Work Items with configurable filters and optional update operations.
+
+## Implementation
 
 ### Job Template
+
 **File:** `/.azure-pipelines/jobs/scan-work-items.yml`
 
-### Parameters
+Uses Azure CLI (`az boards`) for querying and updating work items.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| projectName | string | Yes | - | Azure DevOps project to scan |
-| organizationUrl | string | Yes | - | `https://dev.azure.com/{org}` |
-| sprint | string | No | `@CurrentIteration` | Sprint/Iteration path |
-| areaPath | string | No | - | Filter by area path |
-| teamName | string | No | - | Owning team filter |
-| workItemTypes | string[] | No | `['User Story']` | Types to query |
-| states | string[] | No | `['New','Active']` | State filter |
-| assignedTo | string | No | - | Assigned user filter |
-| tags | string[] | No | - | Tag filters |
-| createdAfter | string | No | - | Created date filter |
-| modifiedAfter | string | No | - | Modified date filter |
-| outputFormat | string | No | `json` | `json`, `csv`, `markdown` |
-| publishArtifact | boolean | No | `true` | Publish results as artifact |
-| sendNotification | boolean | No | `false` | Send email/Teams notification |
+### Query Parameters
 
-### Query Fields (User Story)
-Standard fields to return:
-- `System.Id`
-- `System.Title`
-- `System.State`
-- `System.AssignedTo`
-- `System.IterationPath`
-- `System.AreaPath`
-- `System.Tags`
-- `System.CreatedDate`
-- `System.ChangedDate`
-- `Microsoft.VSTS.Common.Priority`
-- `Microsoft.VSTS.Common.AcceptanceCriteria`
-- `Microsoft.VSTS.Scheduling.StoryPoints`
+| Parameter         | Type   | Default             | Description                   |
+| ----------------- | ------ | ------------------- | ----------------------------- |
+| organizationUrl   | string | required            | `https://dev.azure.com/{org}` |
+| projectName       | string | required            | Project to scan               |
+| azureSubscription | string | required            | Azure service connection      |
+| sprint            | string | `@CurrentIteration` | Sprint/Iteration filter       |
+| areaPath          | string | -                   | Area path filter              |
+| teamName          | string | -                   | Team filter                   |
+| assignedTo        | string | -                   | Assigned to filter            |
+| workItemTypes     | object | `['User Story']`    | Types to query                |
+| states            | object | `['New','Active']`  | State filter                  |
+| tags              | object | -                   | Tag filters                   |
+| priority          | string | -                   | Priority (1-4)                |
+| createdAfter      | string | -                   | Created date filter           |
+| modifiedAfter     | string | -                   | Modified date filter          |
 
-### Implementation Options
+### Update Parameters
 
-#### Option 1: Azure CLI (Recommended)
-Uses built-in `az boards work-item` commands.
-```bash
-az boards query --wiql "SELECT ... FROM WorkItems WHERE ..."
-```
+| Parameter       | Type    | Default | Description                      |
+| --------------- | ------- | ------- | -------------------------------- |
+| enableUpdates   | boolean | false   | Enable work item modifications   |
+| dryRun          | boolean | true    | Preview changes without applying |
+| updateCondition | string  | -       | jq filter for items to update    |
+| addTags         | object  | -       | Tags to add                      |
+| removeTags      | object  | -       | Tags to remove                   |
+| setState        | string  | -       | Set state                        |
+| setAssignedTo   | string  | -       | Set assignee                     |
+| setPriority     | string  | -       | Set priority                     |
+| addComment      | string  | -       | Add discussion comment           |
+| attachFile      | string  | -       | File to attach                   |
 
-**Pros:** No dependencies, native ADO integration
-**Cons:** WIQL syntax required
+### Output Parameters
 
-#### Option 2: REST API via PowerShell
-Direct REST calls to `/_apis/wit/wiql`.
-```powershell
-Invoke-RestMethod -Uri "$org/$project/_apis/wit/wiql?api-version=7.0"
-```
+| Parameter             | Type    | Default             | Description                  |
+| --------------------- | ------- | ------------------- | ---------------------------- |
+| outputFormat          | string  | `json`              | `json`, `csv`, `markdown`    |
+| publishArtifact       | boolean | true                | Publish as pipeline artifact |
+| artifactName          | string  | `work-items-report` | Artifact name                |
+| sendTeamsNotification | boolean | false               | Send Teams notification      |
+| teamsWebhookUrl       | string  | -                   | Teams webhook URL            |
 
-**Pros:** Full control, more flexible
-**Cons:** More code to maintain
+## Example Pipeline
 
-#### Option 3: Python azure-devops SDK
-```python
-from azure.devops.connection import Connection
-from msrest.authentication import BasicAuthentication
-```
+**File:** `/examples/scheduled-reports/azure-pipelines.yml`
 
-**Pros:** Type-safe, SDK support
-**Cons:** Requires Python installation
+Demonstrates:
 
-### Proposed Schedule Patterns
+- Daily standup report (M-F 8am)
+- Weekly sprint summary (Friday 4pm)
+- Stale items check with auto-tagging (Monday 9am)
+- Priority 1 bugs alert
 
-| Schedule | Cron | Use Case |
-|----------|------|----------|
-| Daily standup | `0 8 * * 1-5` | Morning report M-F 8am |
-| Sprint review | `0 14 * * 5` | Friday 2pm for sprint end |
-| Weekly | `0 9 * * 1` | Monday morning summary |
-| End of day | `0 17 * * 1-5` | EOD status check |
+### Schedule Patterns
 
-### Example Pipeline
+| Schedule       | Cron          | Use Case           |
+| -------------- | ------------- | ------------------ |
+| Daily standup  | `0 8 * * 1-5` | Morning report M-F |
+| Weekly summary | `0 16 * * 5`  | Friday EOD summary |
+| Stale check    | `0 9 * * 1`   | Monday cleanup     |
+
+## Usage Examples
+
+### Basic Query (Read-Only)
 
 ```yaml
-# scheduled-work-item-report.yml
-schedules:
-  - cron: '0 8 * * 1-5'
-    displayName: 'Daily standup report'
-    branches:
-      include:
-        - main
-    always: true
-
-trigger: none
-pr: none
-
-jobs:
-  - template: /.azure-pipelines/jobs/scan-work-items.yml
-    parameters:
-      organizationUrl: 'https://dev.azure.com/MyOrg'
-      projectName: 'MyProject'
-      sprint: '@CurrentIteration'
-      teamName: 'Platform Team'
-      workItemTypes: ['User Story', 'Bug']
-      states: ['Active', 'In Progress']
-      outputFormat: 'markdown'
-      sendNotification: true
+- template: /.azure-pipelines/jobs/scan-work-items.yml
+  parameters:
+    organizationUrl: "https://dev.azure.com/MyOrg"
+    projectName: "MyProject"
+    azureSubscription: "my-azure-connection"
+    sprint: "@CurrentIteration"
+    workItemTypes: ["User Story", "Bug"]
+    states: ["Active"]
+    outputFormat: "markdown"
 ```
 
-### Notification Integration
-- Teams webhook for channel posts
-- Email via SendGrid/SMTP
-- Azure Logic App trigger for complex workflows
+### Update Stale Items
 
-## Implementation Steps
+```yaml
+- template: /.azure-pipelines/jobs/scan-work-items.yml
+  parameters:
+    organizationUrl: "https://dev.azure.com/MyOrg"
+    projectName: "MyProject"
+    azureSubscription: "my-azure-connection"
+    states: ["Active"]
+    enableUpdates: true
+    dryRun: false
+    updateCondition: 'select(.fields["System.ChangedDate"] < "2026-01-01")'
+    addTags: ["Stale", "Review-Needed"]
+    addComment: "Marked as stale by automated pipeline."
+```
 
-1. Create `scan-work-items.yml` job template
-2. Add WIQL query builder helper script
-3. Add output formatters (json, csv, markdown)
-4. Add Teams/email notification steps
-5. Create example scheduled pipeline
-6. Update framework documentation
+### Close Resolved Items
 
-## Files to Create
+```yaml
+- template: /.azure-pipelines/jobs/scan-work-items.yml
+  parameters:
+    organizationUrl: "https://dev.azure.com/MyOrg"
+    projectName: "MyProject"
+    azureSubscription: "my-azure-connection"
+    states: ["Resolved"]
+    modifiedAfter: "" # All resolved items
+    enableUpdates: true
+    dryRun: false
+    updateCondition: 'select(.fields["System.State"] == "Resolved")'
+    setState: "Closed"
+    addComment: "Auto-closed by pipeline after verification period."
+```
 
-| File | Purpose |
-|------|---------|
-| `/.azure-pipelines/jobs/scan-work-items.yml` | Main job template |
-| `/scripts/build-wiql-query.sh` | WIQL query builder |
-| `/scripts/format-work-items.py` | Output formatter |
-| `/examples/scheduled-reports/azure-pipelines.yml` | Example pipeline |
+## Prerequisites
+
+1. Azure DevOps PAT or Service Principal with:
+   - Work Items (Read, Write)
+   - Project access
+2. Azure service connection in ADO
+3. Teams webhooks (if notifications enabled)
 
 ## Status
-- [ ] Create scan-work-items.yml job template
-- [ ] Create WIQL query builder script
-- [ ] Create output formatters
-- [ ] Add Teams notification support
-- [ ] Create example scheduled pipeline
+
+- [x] Create scan-work-items.yml job template
+- [x] Add query parameters for all standard WIT fields
+- [x] Add update operations (tags, state, assignment, comments)
+- [x] Add attachment support
+- [x] Add dry run mode for safe testing
+- [x] Create example scheduled pipeline
 - [ ] Update framework documentation
 - [ ] Commit and push changes
