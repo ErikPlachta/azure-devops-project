@@ -27,11 +27,13 @@ extends:
 │   ├── build-*.yml            # Language-specific builds
 │   ├── scan-*.yml             # Security scanning
 │   ├── deploy-sharepoint.yml  # SharePoint file sync
+│   ├── deploy-powerbi.yml     # Power BI PBIX/RDL deploy
 │   └── scan-work-items.yml    # Work item query/update
 ├── scripts/                    # External script logic
 │   ├── common/                # Shared utilities
 │   ├── work-items/            # WIT query/update scripts
-│   └── sharepoint/            # SharePoint deploy scripts
+│   ├── sharepoint/            # SharePoint deploy scripts
+│   └── powerbi/               # Power BI deploy scripts
 ├── stages/                     # Stage compositions
 │   ├── ci.yml                 # Lint → Test → Build → Scan
 │   └── cd-{ut,st,pr}.yml      # Environment deployments
@@ -47,6 +49,7 @@ extends:
 examples/
 ├── typescript-api/            # Node.js API example
 ├── gpf-pm-module/             # SharePoint deployment example
+├── powerbi-reports/           # Power BI PBIX/RDL deployment
 ├── scheduled-reports/         # Scheduled work item reports
 └── manual-work-items/         # On-demand work item queries
 
@@ -69,6 +72,7 @@ docs/                          # Full documentation
 | `scan-dependencies.yml` | npm audit, pip-audit, dotnet list |
 | `scan-secrets.yml` | Gitleaks, TruffleHog |
 | `deploy-sharepoint.yml` | PnP.PowerShell file sync |
+| `deploy-powerbi.yml` | PBIX/RDL report deployment |
 | `scan-work-items.yml` | Query/update Azure DevOps WITs |
 
 ## Quality Gates

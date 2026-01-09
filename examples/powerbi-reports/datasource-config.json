@@ -1,0 +1,17 @@
+{
+  "development": {
+    "server": "dev-sql.database.windows.net",
+    "database": "ReportsDB_Dev",
+    "credentialType": "OAuth2"
+  },
+  "staging": {
+    "server": "staging-sql.database.windows.net",
+    "database": "ReportsDB_Staging",
+    "credentialType": "OAuth2"
+  },
+  "production": {
+    "server": "prod-sql.database.windows.net",
+    "database": "ReportsDB_Prod",
+    "credentialType": "OAuth2"
+  }
+}

@@ -1,0 +1,11 @@
+# Place your .pbix and .rdl report files here
+#
+# Example structure:
+#   reports/
+#   ├── sales-dashboard.pbix
+#   ├── monthly-summary.pbix
+#   ├── inventory-report.rdl
+#   └── financial-statement.rdl
+#
+# Note: PBIX files are binary and will be tracked but not diffed.
+#       RDL files are XML and can be reviewed in pull requests.

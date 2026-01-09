@@ -1,0 +1,174 @@
+# Power BI Reports Deployment Pipeline
+# Deploys PBIX and RDL reports with environment-specific data sources
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - examples/powerbi-reports/reports/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - examples/powerbi-reports/reports/**
+
+variables:
+  - group: powerbi-credentials  # Contains POWERBI_TENANT_ID, POWERBI_CLIENT_ID, POWERBI_CLIENT_SECRET
+  - name: reportPath
+    value: 'examples/powerbi-reports/reports'
+  - name: configFile
+    value: 'examples/powerbi-reports/datasource-config.json'
+
+stages:
+  # Validate reports
+  - stage: Validate
+    displayName: 'Validate Reports'
+    jobs:
+      - job: ValidateReports
+        displayName: 'Validate Report Files'
+        pool:
+          vmImage: 'windows-latest'
+        steps:
+          - checkout: self
+
+          - task: PowerShell@2
+            displayName: 'Check Report Files'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $reportPath = '$(reportPath)'
+                $pbixFiles = Get-ChildItem -Path $reportPath -Filter "*.pbix" -Recurse
+                $rdlFiles = Get-ChildItem -Path $reportPath -Filter "*.rdl" -Recurse
+
+                Write-Host "##[section]Report Files Found"
+                Write-Host "  PBIX files: $($pbixFiles.Count)"
+                Write-Host "  RDL files: $($rdlFiles.Count)"
+
+                if ($pbixFiles.Count -eq 0 -and $rdlFiles.Count -eq 0) {
+                  Write-Warning "No report files found in $reportPath"
+                }
+
+                foreach ($file in $pbixFiles) {
+                  Write-Host "  - $($file.Name) ($([math]::Round($file.Length/1MB, 2)) MB)"
+                }
+                foreach ($file in $rdlFiles) {
+                  Write-Host "  - $($file.Name) ($([math]::Round($file.Length/1KB, 2)) KB)"
+                }
+              pwsh: true
+
+          - task: PowerShell@2
+            displayName: 'Validate RDL XML'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $rdlFiles = Get-ChildItem -Path '$(reportPath)' -Filter "*.rdl" -Recurse
+
+                $errors = 0
+                foreach ($file in $rdlFiles) {
+                  Write-Host "Validating: $($file.Name)"
+                  try {
+                    [xml]$content = Get-Content $file.FullName
+                    Write-Host "  ✓ Valid XML"
+                  } catch {
+                    Write-Host "##vso[task.logissue type=error]Invalid XML in $($file.Name): $_"
+                    $errors++
+                  }
+                }
+
+                if ($errors -gt 0) {
+                  exit 1
+                }
+              pwsh: true
+
+          - task: PowerShell@2
+            displayName: 'Validate Config File'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $configFile = '$(configFile)'
+                if (Test-Path $configFile) {
+                  try {
+                    $config = Get-Content $configFile | ConvertFrom-Json
+                    Write-Host "##[section]Data Source Config"
+                    Write-Host "  Environments: $($config.PSObject.Properties.Name -join ', ')"
+
+                    foreach ($env in $config.PSObject.Properties) {
+                      Write-Host "  $($env.Name):"
+                      Write-Host "    Server: $($env.Value.server)"
+                      Write-Host "    Database: $($env.Value.database)"
+                    }
+                  } catch {
+                    Write-Error "Invalid JSON in config: $_"
+                    exit 1
+                  }
+                } else {
+                  Write-Warning "Config file not found: $configFile"
+                }
+              pwsh: true
+
+  # Deploy to Development
+  - stage: Deploy_Development
+    displayName: 'Deploy to Development'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    variables:
+      - name: workspaceId
+        value: '$(POWERBI_WORKSPACE_DEV)'  # Set in variable group
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-powerbi.yml
+        parameters:
+          environment: development
+          workspaceId: $(workspaceId)
+          azureSubscription: 'azure-powerbi-connection'
+          reportPath: $(reportPath)
+          dataSourceConfigFile: $(configFile)
+          rebindDataSource: true
+          refreshDataset: true
+          refreshTimeout: 15
+
+  # Deploy to Staging
+  - stage: Deploy_Staging
+    displayName: 'Deploy to Staging'
+    dependsOn: Validate
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    variables:
+      - name: workspaceId
+        value: '$(POWERBI_WORKSPACE_STAGING)'
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-powerbi.yml
+        parameters:
+          environment: staging
+          workspaceId: $(workspaceId)
+          azureSubscription: 'azure-powerbi-connection'
+          reportPath: $(reportPath)
+          dataSourceConfigFile: $(configFile)
+          rebindDataSource: true
+          refreshDataset: true
+          refreshTimeout: 30
+
+  # Deploy to Production (manual approval)
+  - stage: Deploy_Production
+    displayName: 'Deploy to Production'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - name: workspaceId
+        value: '$(POWERBI_WORKSPACE_PROD)'
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-powerbi.yml
+        parameters:
+          environment: production
+          workspaceId: $(workspaceId)
+          azureSubscription: 'azure-powerbi-connection'
+          reportPath: $(reportPath)
+          dataSourceConfigFile: $(configFile)
+          rebindDataSource: true
+          refreshDataset: true
+          waitForRefresh: true
+          refreshTimeout: 60
