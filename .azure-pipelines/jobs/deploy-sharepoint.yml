@@ -4,10 +4,7 @@
 parameters:
   - name: environment
     type: string
-    values:
-      - development
-      - validate
-      - production
+    values: [development, validate, production]
 
   - name: azureSubscription
     type: string
@@ -37,12 +34,10 @@ parameters:
   - name: cleanTargetFolder
     type: boolean
     default: false
-    # Delete existing files in target before upload
 
-  - name: flattenStructure
+  - name: dryRun
     type: boolean
     default: false
-    # Upload all files to root of target (no subfolders)
 
   - name: enabled
     type: boolean
@@ -60,6 +55,8 @@ jobs:
         deploy:
           steps:
             - checkout: self
+              sparse-checkout: |
+                .azure-pipelines/scripts
 
             - task: PowerShell@2
               displayName: 'Install PnP.PowerShell'
@@ -71,154 +68,21 @@ jobs:
                 pwsh: true
 
             - task: AzurePowerShell@5
-              displayName: 'Deploy to SharePoint'
+              displayName: 'Deploy to SharePoint${{ if eq(parameters.dryRun, true) }} (Dry Run)${{ else }}${{ endif }}'
               inputs:
                 azureSubscription: ${{ parameters.azureSubscription }}
-                ScriptType: 'InlineScript'
+                ScriptType: 'FilePath'
+                ScriptPath: '.azure-pipelines/scripts/sharepoint/deploy.ps1'
+                ScriptArguments: >-
+                  -SiteUrl "${{ parameters.sharePointSiteUrl }}"
+                  -TargetFolder "${{ parameters.sharePointFolder }}"
+                  -SourceFolder "${{ parameters.sourceFolder }}"
+                  -FilePatterns "${{ parameters.filePatterns }}"
+                  -ExcludePatterns "${{ parameters.excludePatterns }}"
+                  ${{ if eq(parameters.cleanTargetFolder, true) }}:-CleanTarget${{ else }}${{ endif }}
+                  ${{ if eq(parameters.dryRun, true) }}:-DryRun${{ else }}${{ endif }}
                 azurePowerShellVersion: 'LatestVersion'
                 pwsh: true
-                Inline: |
-                  $ErrorActionPreference = "Stop"
-
-                  # Parameters
-                  $siteUrl = "${{ parameters.sharePointSiteUrl }}"
-                  $targetFolder = "${{ parameters.sharePointFolder }}"
-                  $sourceFolder = "${{ parameters.sourceFolder }}"
-                  $filePatterns = "${{ parameters.filePatterns }}" -split ","
-                  $excludePatterns = "${{ parameters.excludePatterns }}" -split ","
-                  $cleanTarget = $${{ parameters.cleanTargetFolder }}
-                  $flatten = $${{ parameters.flattenStructure }}
-                  $environment = "${{ parameters.environment }}"
-
-                  Write-Host "=========================================="
-                  Write-Host "SharePoint Deployment"
-                  Write-Host "=========================================="
-                  Write-Host "Site: $siteUrl"
-                  Write-Host "Target: $targetFolder"
-                  Write-Host "Source: $sourceFolder"
-                  Write-Host "Environment: $environment"
-                  Write-Host "=========================================="
-
-                  # Connect using managed identity or service principal
-                  try {
-                    # Get access token for SharePoint
-                    $token = (Get-AzAccessToken -ResourceUrl "$siteUrl").Token
-                    Connect-PnPOnline -Url $siteUrl -AccessToken $token
-                    Write-Host "Connected to SharePoint"
-                  }
-                  catch {
-                    Write-Error "Failed to connect to SharePoint: $_"
-                    exit 1
-                  }
-
-                  # Clean target folder if requested
-                  if ($cleanTarget) {
-                    Write-Host "Cleaning target folder..."
-                    try {
-                      $existingFiles = Get-PnPFolderItem -FolderSiteRelativeUrl $targetFolder -ItemType File -Recursive
-                      foreach ($file in $existingFiles) {
-                        Remove-PnPFile -ServerRelativeUrl $file.ServerRelativeUrl -Force
-                        Write-Host "  Deleted: $($file.Name)"
-                      }
-                    }
-                    catch {
-                      Write-Warning "Could not clean folder (may not exist): $_"
-                    }
-                  }
-
-                  # Ensure target folder exists
-                  Write-Host "Ensuring target folder exists..."
-                  $folderParts = $targetFolder.Trim("/").Split("/")
-                  $currentPath = ""
-                  foreach ($part in $folderParts) {
-                    $currentPath = if ($currentPath) { "$currentPath/$part" } else { $part }
-                    try {
-                      Resolve-PnPFolder -SiteRelativePath $currentPath | Out-Null
-                    }
-                    catch {
-                      Add-PnPFolder -Name $part -Folder ($currentPath -replace "/$part$", "") | Out-Null
-                      Write-Host "  Created folder: $currentPath"
-                    }
-                  }
-
-                  # Find files to upload
-                  Write-Host "Finding files to upload..."
-                  $filesToUpload = @()
-
-                  Push-Location $sourceFolder
-                  foreach ($pattern in $filePatterns) {
-                    $pattern = $pattern.Trim()
-                    if ($pattern) {
-                      $matchedFiles = Get-ChildItem -Path . -Include $pattern -Recurse -File
-                      $filesToUpload += $matchedFiles
-                    }
-                  }
-                  Pop-Location
-
-                  # Exclude patterns
-                  if ($excludePatterns -and $excludePatterns[0]) {
-                    foreach ($exclude in $excludePatterns) {
-                      $exclude = $exclude.Trim()
-                      if ($exclude) {
-                        $filesToUpload = $filesToUpload | Where-Object { $_.FullName -notlike "*$exclude*" }
-                      }
-                    }
-                  }
-
-                  $filesToUpload = $filesToUpload | Select-Object -Unique
-
-                  if ($filesToUpload.Count -eq 0) {
-                    Write-Warning "No files found to upload"
-                    exit 0
-                  }
-
-                  Write-Host "Found $($filesToUpload.Count) files to upload"
-
-                  # Upload files
-                  $uploaded = 0
-                  $failed = 0
-                  $sourceFullPath = (Resolve-Path $sourceFolder).Path
-
-                  foreach ($file in $filesToUpload) {
-                    try {
-                      if ($flatten) {
-                        $destFolder = $targetFolder
-                      }
-                      else {
-                        # Preserve folder structure
-                        $relativePath = $file.DirectoryName.Replace($sourceFullPath, "").TrimStart("\", "/")
-                        $destFolder = if ($relativePath) { "$targetFolder/$relativePath" } else { $targetFolder }
-                        $destFolder = $destFolder -replace "\\", "/"
-
-                        # Ensure subfolder exists
-                        if ($relativePath) {
-                          Resolve-PnPFolder -SiteRelativePath $destFolder -ErrorAction SilentlyContinue | Out-Null
-                          if (-not $?) {
-                            Add-PnPFolder -Name (Split-Path $destFolder -Leaf) -Folder (Split-Path $destFolder -Parent) -ErrorAction SilentlyContinue | Out-Null
-                          }
-                        }
-                      }
-
-                      Add-PnPFile -Path $file.FullName -Folder $destFolder -ErrorAction Stop | Out-Null
-                      Write-Host "  Uploaded: $($file.Name) -> $destFolder"
-                      $uploaded++
-                    }
-                    catch {
-                      Write-Error "  Failed: $($file.Name) - $_"
-                      $failed++
-                    }
-                  }
-
-                  Write-Host "=========================================="
-                  Write-Host "Deployment Complete"
-                  Write-Host "  Uploaded: $uploaded"
-                  Write-Host "  Failed: $failed"
-                  Write-Host "=========================================="
-
-                  if ($failed -gt 0) {
-                    Write-Error "Some files failed to upload"
-                    exit 1
-                  }
 
             - task: PowerShell@2
               displayName: 'Deployment Summary'

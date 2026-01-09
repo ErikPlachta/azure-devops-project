@@ -1,0 +1,216 @@
+# Scan and Update Azure DevOps Work Items
+# Queries work items with filters, optionally updates them based on conditions
+
+parameters:
+  # Required
+  - name: organizationUrl
+    type: string
+    displayName: 'Azure DevOps organization URL'
+  - name: projectName
+    type: string
+    displayName: 'Project name to query'
+  - name: azureSubscription
+    type: string
+    displayName: 'Azure service connection'
+
+  # Query filters
+  - name: sprint
+    type: string
+    default: '@CurrentIteration'
+  - name: areaPath
+    type: string
+    default: ''
+  - name: assignedTo
+    type: string
+    default: ''
+  - name: workItemTypes
+    type: object
+    default: ['User Story']
+  - name: states
+    type: object
+    default: ['New', 'Active']
+  - name: tags
+    type: object
+    default: []
+  - name: priority
+    type: string
+    default: ''
+  - name: createdAfter
+    type: string
+    default: ''
+  - name: modifiedAfter
+    type: string
+    default: ''
+
+  # Update operations
+  - name: enableUpdates
+    type: boolean
+    default: false
+  - name: dryRun
+    type: boolean
+    default: true
+  - name: updateCondition
+    type: string
+    default: ''
+  - name: addTags
+    type: object
+    default: []
+  - name: removeTags
+    type: object
+    default: []
+  - name: setState
+    type: string
+    default: ''
+  - name: setAssignedTo
+    type: string
+    default: ''
+  - name: setPriority
+    type: string
+    default: ''
+  - name: addComment
+    type: string
+    default: ''
+
+  # Attachment
+  - name: attachFile
+    type: string
+    default: ''
+
+  # Output options
+  - name: outputFormat
+    type: string
+    default: 'json'
+    values: [json, csv, markdown]
+  - name: publishArtifact
+    type: boolean
+    default: true
+  - name: artifactName
+    type: string
+    default: 'work-items-report'
+
+  # Notifications
+  - name: sendTeamsNotification
+    type: boolean
+    default: false
+  - name: teamsWebhookUrl
+    type: string
+    default: ''
+
+  # Job config
+  - name: pool
+    type: object
+    default:
+      vmImage: 'ubuntu-latest'
+  - name: dependsOn
+    type: object
+    default: []
+  - name: condition
+    type: string
+    default: 'succeeded()'
+
+jobs:
+  - job: ScanWorkItems
+    displayName: 'Scan Azure DevOps Work Items'
+    pool: ${{ parameters.pool }}
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: ${{ parameters.condition }}
+    steps:
+      - checkout: self
+        sparse-checkout: |
+          .azure-pipelines/scripts
+
+      # Query work items
+      - task: AzureCLI@2
+        displayName: 'Query Work Items'
+        inputs:
+          azureSubscription: '${{ parameters.azureSubscription }}'
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            chmod +x .azure-pipelines/scripts/common/*.sh
+            chmod +x .azure-pipelines/scripts/work-items/*.sh
+            source .azure-pipelines/scripts/common/setup-az-devops.sh \
+              "$ORG_URL" "$PROJECT_NAME"
+            .azure-pipelines/scripts/work-items/query.sh
+        env:
+          ORG_URL: ${{ parameters.organizationUrl }}
+          PROJECT_NAME: ${{ parameters.projectName }}
+          WORK_ITEM_TYPES: ${{ join(',', parameters.workItemTypes) }}
+          STATES: ${{ join(',', parameters.states) }}
+          SPRINT: ${{ parameters.sprint }}
+          AREA_PATH: ${{ parameters.areaPath }}
+          ASSIGNED_TO: ${{ parameters.assignedTo }}
+          PRIORITY: ${{ parameters.priority }}
+          TAGS: ${{ join(',', parameters.tags) }}
+          CREATED_AFTER: ${{ parameters.createdAfter }}
+          MODIFIED_AFTER: ${{ parameters.modifiedAfter }}
+
+      # Update work items (if enabled)
+      - ${{ if eq(parameters.enableUpdates, true) }}:
+        - task: AzureCLI@2
+          displayName: 'Update Work Items${{ if eq(parameters.dryRun, true) }} (Dry Run)${{ else }}${{ endif }}'
+          inputs:
+            azureSubscription: '${{ parameters.azureSubscription }}'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              source .azure-pipelines/scripts/common/setup-az-devops.sh \
+                "$ORG_URL" "$PROJECT_NAME"
+              .azure-pipelines/scripts/work-items/update.sh
+          env:
+            ORG_URL: ${{ parameters.organizationUrl }}
+            PROJECT_NAME: ${{ parameters.projectName }}
+            DRY_RUN: ${{ parameters.dryRun }}
+            UPDATE_CONDITION: ${{ parameters.updateCondition }}
+            ADD_TAGS: ${{ join(';', parameters.addTags) }}
+            REMOVE_TAGS: ${{ join(';', parameters.removeTags) }}
+            SET_STATE: ${{ parameters.setState }}
+            SET_ASSIGNED_TO: ${{ parameters.setAssignedTo }}
+            SET_PRIORITY: ${{ parameters.setPriority }}
+            ADD_COMMENT: ${{ parameters.addComment }}
+
+      # Attach file (if specified)
+      - ${{ if ne(parameters.attachFile, '') }}:
+        - task: AzureCLI@2
+          displayName: 'Attach Files'
+          inputs:
+            azureSubscription: '${{ parameters.azureSubscription }}'
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              source .azure-pipelines/scripts/common/setup-az-devops.sh \
+                "$ORG_URL" "$PROJECT_NAME"
+              .azure-pipelines/scripts/work-items/attach-file.sh
+          env:
+            ORG_URL: ${{ parameters.organizationUrl }}
+            PROJECT_NAME: ${{ parameters.projectName }}
+            ATTACH_FILE: ${{ parameters.attachFile }}
+            DRY_RUN: ${{ parameters.dryRun }}
+            UPDATE_CONDITION: ${{ parameters.updateCondition }}
+
+      # Format output
+      - script: .azure-pipelines/scripts/work-items/format-output.sh
+        displayName: 'Format Output (${{ parameters.outputFormat }})'
+        env:
+          FORMAT: ${{ parameters.outputFormat }}
+          PROJECT_NAME: ${{ parameters.projectName }}
+          SPRINT: ${{ parameters.sprint }}
+
+      # Teams notification
+      - ${{ if eq(parameters.sendTeamsNotification, true) }}:
+        - script: .azure-pipelines/scripts/work-items/notify-teams.sh
+          displayName: 'Send Teams Notification'
+          condition: and(succeeded(), ne('${{ parameters.teamsWebhookUrl }}', ''))
+          env:
+            TEAMS_WEBHOOK_URL: ${{ parameters.teamsWebhookUrl }}
+            PROJECT_NAME: ${{ parameters.projectName }}
+            SPRINT: ${{ parameters.sprint }}
+            SHOW_UPDATES: ${{ parameters.enableUpdates }}
+
+      # Publish artifact
+      - ${{ if eq(parameters.publishArtifact, true) }}:
+        - task: PublishBuildArtifacts@1
+          displayName: 'Publish Report'
+          inputs:
+            pathToPublish: 'work-items.${{ parameters.outputFormat }}'
+            artifactName: '${{ parameters.artifactName }}'

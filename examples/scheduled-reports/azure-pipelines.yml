@@ -1,0 +1,142 @@
+# Scheduled Work Item Reports
+# Runs daily standup report and weekly sprint summary
+
+schedules:
+  # Daily standup - M-F at 8am
+  - cron: '0 8 * * 1-5'
+    displayName: 'Daily Standup Report'
+    branches:
+      include:
+        - main
+    always: true
+
+  # Weekly summary - Friday 4pm
+  - cron: '0 16 * * 5'
+    displayName: 'Weekly Sprint Summary'
+    branches:
+      include:
+        - main
+    always: true
+
+  # Stale item check - Monday 9am
+  - cron: '0 9 * * 1'
+    displayName: 'Stale Items Check'
+    branches:
+      include:
+        - main
+    always: true
+
+trigger: none
+pr: none
+
+variables:
+  - name: organizationUrl
+    value: 'https://dev.azure.com/MyOrganization'
+  - name: projectName
+    value: 'MyProject'
+  - name: azureSubscription
+    value: 'azure-devops-connection'
+  # Teams webhook - store in variable group for security
+  - group: teams-webhooks
+
+stages:
+  # Daily Standup Report
+  - stage: DailyStandup
+    displayName: 'Daily Standup Report'
+    condition: eq(variables['Build.CronSchedule.DisplayName'], 'Daily Standup Report')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: '@CurrentIteration'
+          workItemTypes:
+            - 'User Story'
+            - 'Bug'
+            - 'Task'
+          states:
+            - 'Active'
+            - 'In Progress'
+          outputFormat: 'markdown'
+          sendTeamsNotification: true
+          teamsWebhookUrl: $(teamsStandupWebhook)
+          artifactName: 'daily-standup-$(Build.BuildNumber)'
+
+  # Weekly Sprint Summary
+  - stage: WeeklySummary
+    displayName: 'Weekly Sprint Summary'
+    condition: eq(variables['Build.CronSchedule.DisplayName'], 'Weekly Sprint Summary')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: '@CurrentIteration'
+          workItemTypes:
+            - 'User Story'
+            - 'Bug'
+          states:
+            - 'New'
+            - 'Active'
+            - 'Resolved'
+            - 'Closed'
+          outputFormat: 'csv'
+          sendTeamsNotification: true
+          teamsWebhookUrl: $(teamsSprintWebhook)
+          artifactName: 'weekly-summary-$(Build.BuildNumber)'
+
+  # Stale Items Check - Find and tag items not updated in 7 days
+  - stage: StaleItemsCheck
+    displayName: 'Stale Items Check'
+    condition: eq(variables['Build.CronSchedule.DisplayName'], 'Stale Items Check')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: '@CurrentIteration'
+          workItemTypes:
+            - 'User Story'
+            - 'Bug'
+          states:
+            - 'Active'
+            - 'In Progress'
+          # Items not modified in last 7 days
+          modifiedAfter: ''  # Will need custom WIQL for "older than"
+          outputFormat: 'markdown'
+          # Enable updates to tag stale items
+          enableUpdates: true
+          dryRun: true  # Set to false to actually apply
+          updateCondition: 'select(.fields["System.ChangedDate"] < (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))'
+          addTags:
+            - 'Stale'
+            - 'Needs-Attention'
+          addComment: 'This item has been inactive for 7+ days. Please update status or add a comment.'
+          sendTeamsNotification: true
+          teamsWebhookUrl: $(teamsStaleWebhook)
+          artifactName: 'stale-items-$(Build.BuildNumber)'
+
+  # Priority 1 Items Alert
+  - stage: P1Alert
+    displayName: 'Priority 1 Items Alert'
+    # Run with daily standup
+    condition: eq(variables['Build.CronSchedule.DisplayName'], 'Daily Standup Report')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          workItemTypes:
+            - 'Bug'
+          states:
+            - 'New'
+            - 'Active'
+          priority: '1'
+          outputFormat: 'markdown'
+          sendTeamsNotification: true
+          teamsWebhookUrl: $(teamsP1Webhook)
+          artifactName: 'p1-bugs-$(Build.BuildNumber)'
