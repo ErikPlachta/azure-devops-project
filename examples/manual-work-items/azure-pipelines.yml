@@ -1,0 +1,203 @@
+# Manual Work Item Reports
+# Run on-demand via Azure DevOps UI with configurable parameters
+
+trigger: none
+pr: none
+
+parameters:
+  # Report selection
+  - name: reportType
+    displayName: 'Report Type'
+    type: string
+    default: 'sprint-status'
+    values:
+      - sprint-status
+      - stale-items
+      - my-items
+      - priority-bugs
+      - custom-query
+
+  # Query filters
+  - name: sprint
+    displayName: 'Sprint'
+    type: string
+    default: '@CurrentIteration'
+
+  - name: workItemTypes
+    displayName: 'Work Item Types'
+    type: string
+    default: 'User Story,Bug'
+
+  - name: states
+    displayName: 'States (comma-separated)'
+    type: string
+    default: 'New,Active,In Progress'
+
+  - name: assignedTo
+    displayName: 'Assigned To (email, leave blank for all)'
+    type: string
+    default: ''
+
+  - name: priority
+    displayName: 'Priority (1-4, leave blank for all)'
+    type: string
+    default: ''
+
+  - name: tags
+    displayName: 'Tags (comma-separated)'
+    type: string
+    default: ''
+
+  # Update options
+  - name: enableUpdates
+    displayName: 'Enable Updates'
+    type: boolean
+    default: false
+
+  - name: dryRun
+    displayName: 'Dry Run (preview changes only)'
+    type: boolean
+    default: true
+
+  - name: addTags
+    displayName: 'Tags to Add (semicolon-separated)'
+    type: string
+    default: ''
+
+  - name: addComment
+    displayName: 'Comment to Add'
+    type: string
+    default: ''
+
+  # Output
+  - name: outputFormat
+    displayName: 'Output Format'
+    type: string
+    default: 'markdown'
+    values:
+      - json
+      - csv
+      - markdown
+
+  - name: sendNotification
+    displayName: 'Send Teams Notification'
+    type: boolean
+    default: false
+
+variables:
+  - name: organizationUrl
+    value: 'https://dev.azure.com/MyOrganization'
+  - name: projectName
+    value: 'MyProject'
+  - name: azureSubscription
+    value: 'azure-devops-connection'
+  - group: teams-webhooks  # Contains teamsWebhookUrl
+
+stages:
+  # Sprint Status Report
+  - stage: SprintStatus
+    displayName: 'Sprint Status Report'
+    condition: eq('${{ parameters.reportType }}', 'sprint-status')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: ${{ parameters.sprint }}
+          workItemTypes: ${{ split(parameters.workItemTypes, ',') }}
+          states: ${{ split(parameters.states, ',') }}
+          assignedTo: ${{ parameters.assignedTo }}
+          priority: ${{ parameters.priority }}
+          tags: ${{ split(parameters.tags, ',') }}
+          outputFormat: ${{ parameters.outputFormat }}
+          enableUpdates: ${{ parameters.enableUpdates }}
+          dryRun: ${{ parameters.dryRun }}
+          addTags: ${{ split(parameters.addTags, ';') }}
+          addComment: ${{ parameters.addComment }}
+          sendTeamsNotification: ${{ parameters.sendNotification }}
+          teamsWebhookUrl: $(teamsWebhookUrl)
+          artifactName: 'sprint-status-$(Build.BuildNumber)'
+
+  # Stale Items Report
+  - stage: StaleItems
+    displayName: 'Stale Items Report'
+    condition: eq('${{ parameters.reportType }}', 'stale-items')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          workItemTypes: ['User Story', 'Bug', 'Task']
+          states: ['Active', 'In Progress']
+          outputFormat: ${{ parameters.outputFormat }}
+          enableUpdates: ${{ parameters.enableUpdates }}
+          dryRun: ${{ parameters.dryRun }}
+          updateCondition: 'select(.fields["System.ChangedDate"] < (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))'
+          addTags: ['Stale']
+          addComment: ${{ parameters.addComment }}
+          sendTeamsNotification: ${{ parameters.sendNotification }}
+          teamsWebhookUrl: $(teamsWebhookUrl)
+          artifactName: 'stale-items-$(Build.BuildNumber)'
+
+  # My Items Report
+  - stage: MyItems
+    displayName: 'My Items Report'
+    condition: eq('${{ parameters.reportType }}', 'my-items')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: ${{ parameters.sprint }}
+          workItemTypes: ['User Story', 'Bug', 'Task']
+          states: ['New', 'Active', 'In Progress']
+          assignedTo: '$(Build.RequestedForEmail)'  # Current user
+          outputFormat: ${{ parameters.outputFormat }}
+          sendTeamsNotification: false
+          artifactName: 'my-items-$(Build.BuildNumber)'
+
+  # Priority Bugs Report
+  - stage: PriorityBugs
+    displayName: 'Priority 1-2 Bugs'
+    condition: eq('${{ parameters.reportType }}', 'priority-bugs')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          workItemTypes: ['Bug']
+          states: ['New', 'Active']
+          priority: '1'
+          outputFormat: ${{ parameters.outputFormat }}
+          sendTeamsNotification: ${{ parameters.sendNotification }}
+          teamsWebhookUrl: $(teamsWebhookUrl)
+          artifactName: 'priority-bugs-$(Build.BuildNumber)'
+
+  # Custom Query (uses all parameters)
+  - stage: CustomQuery
+    displayName: 'Custom Query'
+    condition: eq('${{ parameters.reportType }}', 'custom-query')
+    jobs:
+      - template: /.azure-pipelines/jobs/scan-work-items.yml
+        parameters:
+          organizationUrl: $(organizationUrl)
+          projectName: $(projectName)
+          azureSubscription: $(azureSubscription)
+          sprint: ${{ parameters.sprint }}
+          workItemTypes: ${{ split(parameters.workItemTypes, ',') }}
+          states: ${{ split(parameters.states, ',') }}
+          assignedTo: ${{ parameters.assignedTo }}
+          priority: ${{ parameters.priority }}
+          tags: ${{ split(parameters.tags, ',') }}
+          outputFormat: ${{ parameters.outputFormat }}
+          enableUpdates: ${{ parameters.enableUpdates }}
+          dryRun: ${{ parameters.dryRun }}
+          addTags: ${{ split(parameters.addTags, ';') }}
+          addComment: ${{ parameters.addComment }}
+          sendTeamsNotification: ${{ parameters.sendNotification }}
+          teamsWebhookUrl: $(teamsWebhookUrl)
+          artifactName: 'custom-query-$(Build.BuildNumber)'
