@@ -1,0 +1,161 @@
+# Framework Self-Validation Pipeline
+# Validates pipeline templates, configs, and documentation
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Governance
+    displayName: 'Governance Checks'
+    jobs:
+      - job: ValidatePipelineGovernance
+        displayName: 'Validate Pipeline Governance'
+        steps:
+          - script: |
+              chmod +x scripts/validate-pipelines.sh
+              ./scripts/validate-pipelines.sh .
+            displayName: 'Run governance validation'
+
+          - script: |
+              echo "Checking for direct stage/job definitions in project pipelines..."
+              VIOLATIONS=0
+
+              # Find pipeline files outside framework folder
+              for file in $(find . -name "azure-pipelines.yml" -type f | grep -v "/.azure-pipelines/"); do
+                # Skip root pipeline (this file)
+                if [[ "$file" == "./azure-pipelines.yml" ]]; then
+                  continue
+                fi
+
+                # Check for extends pattern
+                if ! grep -q "^extends:" "$file"; then
+                  echo "VIOLATION: $file does not use extends: pattern"
+                  VIOLATIONS=$((VIOLATIONS + 1))
+                fi
+              done
+
+              if [[ $VIOLATIONS -gt 0 ]]; then
+                echo "##vso[task.logissue type=error]Found $VIOLATIONS governance violations"
+                exit 1
+              fi
+
+              echo "All project pipelines follow governance rules"
+            displayName: 'Check extends pattern usage'
+
+  - stage: Validate
+    displayName: 'Validate Framework'
+    dependsOn: Governance
+    jobs:
+      - job: ValidateYAML
+        displayName: 'Validate YAML Templates'
+        steps:
+          - script: |
+              pip install yamllint
+            displayName: 'Install yamllint'
+
+          - script: |
+              echo "Validating pipeline YAML files..."
+              find .azure-pipelines -name "*.yml" -type f | while read file; do
+                echo "Checking: $file"
+                yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$file" || exit 1
+              done
+              echo "All YAML files valid"
+            displayName: 'Lint pipeline templates'
+
+      - job: ValidateJSON
+        displayName: 'Validate JSON Configs'
+        steps:
+          - script: |
+              echo "Validating JSON files..."
+              find .azure-pipelines/configs -name "*.json" -type f | while read file; do
+                echo "Checking: $file"
+                python -m json.tool "$file" > /dev/null || exit 1
+              done
+              echo "All JSON files valid"
+            displayName: 'Validate JSON syntax'
+
+      - job: ValidateJS
+        displayName: 'Validate JS Configs'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+
+          - script: |
+              echo "Validating ESLint config files..."
+              cd .azure-pipelines/configs/eslint
+              for file in *.js; do
+                echo "Checking: $file"
+                node -c "$file" || exit 1
+              done
+              echo "All JS config files valid"
+            displayName: 'Validate JS syntax'
+
+      - job: ValidateTOML
+        displayName: 'Validate TOML Configs'
+        steps:
+          - script: |
+              pip install toml
+            displayName: 'Install toml'
+
+          - script: |
+              echo "Validating TOML files..."
+              find .azure-pipelines/configs -name "*.toml" -type f | while read file; do
+                echo "Checking: $file"
+                python -c "import toml; toml.load('$file')" || exit 1
+              done
+              echo "All TOML files valid"
+            displayName: 'Validate TOML syntax'
+
+  - stage: TestExample
+    displayName: 'Test TypeScript Example'
+    dependsOn: Validate
+    jobs:
+      - job: TestTypescript
+        displayName: 'Build & Test typescript-api'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+
+          - script: npm ci
+            displayName: 'Install dependencies'
+            workingDirectory: examples/typescript-api
+
+          - script: npm run lint
+            displayName: 'Lint'
+            workingDirectory: examples/typescript-api
+
+          - script: npm run build
+            displayName: 'Build'
+            workingDirectory: examples/typescript-api
+
+          - script: npm test
+            displayName: 'Test'
+            workingDirectory: examples/typescript-api
+
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'examples/typescript-api/junit.xml'
+              failTaskOnFailedTests: true
+
+          - task: PublishCodeCoverageResults@1
+            condition: succeededOrFailed()
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: 'examples/typescript-api/coverage/cobertura-coverage.xml'

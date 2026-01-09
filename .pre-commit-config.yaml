@@ -1,0 +1,48 @@
+# Pre-commit hooks for Azure DevOps Framework
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # YAML validation
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        args: [--unsafe]  # Allow Azure Pipelines template expressions
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-json
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        args: [-d, "{extends: relaxed, rules: {line-length: disable, document-start: disable}}"]
+        files: \.ya?ml$
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+
+  # Pipeline governance validation
+  - repo: local
+    hooks:
+      - id: validate-pipelines
+        name: Validate Pipeline Governance
+        entry: bash scripts/validate-pipelines.sh
+        language: system
+        files: azure-pipelines\.yml$
+        pass_filenames: false
+
+  # Prevent secrets in commits
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: \.lock$|\.json$

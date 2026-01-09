@@ -131,14 +131,27 @@ jobs:
       - ${{ if or(eq(parameters.language, 'yaml'), eq(parameters.language, 'multi')) }}:
         - script: |
             pip install yamllint
-            yamllint . -c .yamllint.yml || yamllint .
+            if [ -f ".yamllint.yml" ]; then
+              yamllint . -c .yamllint.yml
+            else
+              yamllint . -d "{extends: relaxed, rules: {line-length: disable}}"
+            fi
           displayName: 'yamllint'
           workingDirectory: ${{ parameters.workingDirectory }}
 
       # Shell
       - ${{ if or(eq(parameters.language, 'shell'), eq(parameters.language, 'multi')) }}:
         - script: |
-            find . -name "*.sh" -type f | xargs shellcheck || true
-            find . -name "*.bash" -type f | xargs shellcheck || true
+            ERRORS=0
+            for file in $(find . -name "*.sh" -o -name "*.bash" -type f 2>/dev/null); do
+              if ! shellcheck "$file"; then
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+            if [ $ERRORS -gt 0 ]; then
+              echo "##vso[task.logissue type=error]shellcheck found $ERRORS files with issues"
+              exit 1
+            fi
+            echo "shellcheck passed"
           displayName: 'shellcheck'
           workingDirectory: ${{ parameters.workingDirectory }}

@@ -74,20 +74,25 @@ Linting, formatting, static analysis, and quality gates.
 
 ## Shared Configuration Strategy
 
-Centralized configs, extended per-project:
+Centralized configs in `/.azure-pipelines/configs/`, extended per-project:
 
 ```
-/.config/
+/.azure-pipelines/configs/
 ├── eslint/
-│   └── base.js           # Shared ESLint rules
-├── prettier/
-│   └── .prettierrc       # Shared Prettier config
+│   ├── base.js           # Standard rules
+│   ├── relaxed.js        # Light enforcement
+│   └── strict.js         # Maximum enforcement
 ├── ruff/
-│   └── ruff.toml         # Shared Ruff config
-├── sonar/
-│   └── sonar-project.properties  # Template
-└── editorconfig/
-    └── .editorconfig     # Shared editor settings
+│   ├── base.toml         # Standard Python rules
+│   ├── relaxed.toml      # Light enforcement
+│   └── strict.toml       # Maximum enforcement
+├── dotnet/
+│   ├── base.editorconfig
+│   ├── relaxed.editorconfig
+│   ├── strict.editorconfig
+│   └── stylecop.json
+└── sonar/
+    └── sonar-project.properties.template
 ```
 
 Per-project extends:

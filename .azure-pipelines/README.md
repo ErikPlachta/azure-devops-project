@@ -4,7 +4,7 @@ Modular, scalable pipeline templates with single-source-of-truth patterns.
 
 ## Folder Structure
 
-```
+```t
 .azure-pipelines/
 ├── README.md                     # This file
 ├── configs/                      # Tool configurations (single source of truth)
@@ -62,25 +62,30 @@ Modular, scalable pipeline templates with single-source-of-truth patterns.
 ## Design Principles
 
 ### 1. Single Source of Truth
+
 - Tool configs in `/configs/` - inherited by all projects
 - Job definitions in `/jobs/` - parameterized, reusable
 - Thresholds in `/variables/thresholds.yml` - centralized quality gates
 
 ### 2. Composition Over Inheritance
+
 - **Jobs** are atomic units (lint, test, scan, deploy)
 - **Stages** compose jobs for specific workflows
 - **Templates** compose stages for complete pipelines
 
 ### 3. Configuration Levels
+
 Each language has three config levels:
-| Level | Use Case | Enforcement |
-|-------|----------|-------------|
-| `relaxed` | Internal tools, scripts, POCs | Suggestions/warnings |
-| `base` | Standard production code | Warnings + key errors |
-| `strict` | Critical systems, compliance | Errors + security rules |
+
+| Level     | Use Case                      | Enforcement             |
+| --------- | ----------------------------- | ----------------------- |
+| `relaxed` | Internal tools, scripts, POCs | Suggestions/warnings    |
+| `base`    | Standard production code      | Warnings + key errors   |
+| `strict`  | Critical systems, compliance  | Errors + security rules |
 
 ### 4. Configuration Hierarchy
-```
+
+```text
 Global defaults (variables/thresholds.yml)
     └── Language defaults (configs/{language}/base.*)
         └── Config level override (relaxed/strict)
@@ -88,7 +93,9 @@ Global defaults (variables/thresholds.yml)
 ```
 
 ### 5. Conditional Execution
+
 All jobs support:
+
 - `enabled` parameter for feature flags
 - Branch conditions for environment targeting
 - Language detection for multi-language repos
@@ -96,6 +103,7 @@ All jobs support:
 ## Quick Start
 
 ### Full CI/CD Pipeline (App Service)
+
 ```yaml
 # azure-pipelines.yml
 trigger:
@@ -114,6 +122,7 @@ extends:
 ```
 
 ### Full CI/CD Pipeline (Databricks)
+
 ```yaml
 extends:
   template: /.azure-pipelines/templates/ci-cd-full.yml
@@ -128,6 +137,7 @@ extends:
 ```
 
 ### CI Only (Libraries/PRs)
+
 ```yaml
 extends:
   template: /.azure-pipelines/templates/ci-only.yml
@@ -139,6 +149,7 @@ extends:
 ```
 
 ### Custom Job Composition
+
 ```yaml
 stages:
   - stage: Build
@@ -153,7 +164,7 @@ stages:
         parameters:
           language: typescript
           workingDirectory: src/api
-          coverageThreshold: 95  # Override default
+          coverageThreshold: 95 # Override default
 
   - stage: Deploy
     dependsOn: Build
@@ -166,6 +177,7 @@ stages:
 ```
 
 ### Promote Between Environments
+
 ```yaml
 # Manual promotion pipeline
 extends:
@@ -180,49 +192,55 @@ extends:
 ## Parameters Reference
 
 ### ci-cd-full.yml
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `language` | string | Yes | - | `typescript`, `python`, `dotnet` |
-| `deployTarget` | string | Yes | - | `appservice`, `databricks`, `powerbi` |
-| `workingDirectory` | string | No | `.` | Project path |
-| `configLevel` | string | No | `base` | `relaxed`, `base`, `strict` |
-| `coverageThreshold` | number | No | `90` | Min code coverage % |
-| `appServiceName` | string | Cond | - | For appservice deploy |
-| `databricksHost*` | string | Cond | - | For databricks deploy |
-| `workspaceId*` | string | Cond | - | For powerbi deploy |
-| `runLint` | boolean | No | `true` | Enable lint job |
-| `runTests` | boolean | No | `true` | Enable test job |
-| `runSonar` | boolean | No | `true` | Enable SonarCloud |
-| `runSmokeTest` | boolean | No | `true` | Enable smoke tests |
-| `deployToUT` | boolean | No | `true` | Enable UT deploy |
-| `deployToST` | boolean | No | `true` | Enable ST deploy |
-| `deployToPR` | boolean | No | `true` | Enable PR deploy |
+
+| Parameter           | Type    | Required | Default | Description                           |
+| ------------------- | ------- | -------- | ------- | ------------------------------------- |
+| `language`          | string  | Yes      | -       | `typescript`, `python`, `dotnet`      |
+| `deployTarget`      | string  | Yes      | -       | `appservice`, `databricks`, `powerbi` |
+| `workingDirectory`  | string  | No       | `.`     | Project path                          |
+| `configLevel`       | string  | No       | `base`  | `relaxed`, `base`, `strict`           |
+| `coverageThreshold` | number  | No       | `90`    | Min code coverage %                   |
+| `appServiceName`    | string  | Cond     | -       | For appservice deploy                 |
+| `databricksHost*`   | string  | Cond     | -       | For databricks deploy                 |
+| `workspaceId*`      | string  | Cond     | -       | For powerbi deploy                    |
+| `runLint`           | boolean | No       | `true`  | Enable lint job                       |
+| `runTests`          | boolean | No       | `true`  | Enable test job                       |
+| `runSonar`          | boolean | No       | `true`  | Enable SonarCloud                     |
+| `runSmokeTest`      | boolean | No       | `true`  | Enable smoke tests                    |
+| `deployToUT`        | boolean | No       | `true`  | Enable UT deploy                      |
+| `deployToST`        | boolean | No       | `true`  | Enable ST deploy                      |
+| `deployToPR`        | boolean | No       | `true`  | Enable PR deploy                      |
 
 ### Job Parameters
+
 All jobs accept:
+
 - `workingDirectory`: Path to project
 - `enabled`: Skip job entirely (default: true)
 
 Lint jobs also accept:
+
 - `configLevel`: relaxed/base/strict
 - `failOnWarning`: Treat warnings as errors
 
 Test jobs also accept:
+
 - `coverageThreshold`: Override global threshold
 - `testFilter`: Pattern for selective tests
 
 ## Branch Strategy
 
-| Branch | Deploys To | Trigger |
-|--------|-----------|---------|
-| `feature/*` | (CI only) | Push |
-| `develop` | UT | Push |
-| `release/*` | ST | Push |
-| `main` | ST → PR | Push |
+| Branch      | Deploys To | Trigger |
+| ----------- | ---------- | ------- |
+| `feature/*` | (CI only)  | Push    |
+| `develop`   | UT         | Push    |
+| `release/*` | ST         | Push    |
+| `main`      | ST → PR    | Push    |
 
 ## Environment Approvals
 
 Configure in Azure DevOps Environments:
+
 - `barings-appservice-st`: Optional approval
 - `barings-appservice-pr`: Required approval + checks
 - `barings-databricks-*`: Same pattern

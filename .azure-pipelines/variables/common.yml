@@ -9,6 +9,8 @@ variables:
     value: '3.11'
   - name: tool.dotnet.version
     value: '8.0.x'
+  - name: tool.gitleaks.version
+    value: '8.18.0'
 
   # Agent pools
   - name: pool.default

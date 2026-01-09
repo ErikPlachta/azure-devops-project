@@ -120,6 +120,9 @@ parameters:
     type: string
     default: 'barings'
 
+variables:
+  - template: ../variables/common.yml
+
 stages:
   # CI Stage
   - template: ../stages/ci.yml

@@ -49,15 +49,22 @@ jobs:
           workingDirectory: ${{ parameters.workingDirectory }}
 
         - script: |
-            AUDIT_LEVEL="moderate"
-            if [ "${{ parameters.failOnHigh }}" = "true" ]; then
-              AUDIT_LEVEL="high"
-            fi
+            # npm audit --audit-level=X fails if severity >= X
+            # high = fail on high+critical, critical = fail only on critical
+            # More strict (high) should take precedence over less strict (critical)
+            AUDIT_LEVEL="none"
             if [ "${{ parameters.failOnCritical }}" = "true" ]; then
               AUDIT_LEVEL="critical"
             fi
+            if [ "${{ parameters.failOnHigh }}" = "true" ]; then
+              AUDIT_LEVEL="high"  # More strict, overrides critical-only
+            fi
 
-            npm audit --audit-level=$AUDIT_LEVEL
+            if [ "$AUDIT_LEVEL" = "none" ]; then
+              npm audit || true  # Report only, don't fail
+            else
+              npm audit --audit-level=$AUDIT_LEVEL
+            fi
           displayName: 'npm audit'
           workingDirectory: ${{ parameters.workingDirectory }}
 

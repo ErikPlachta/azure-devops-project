@@ -73,24 +73,25 @@ CI/CD templates, patterns, and deployment strategies.
 ```yaml
 # azure-pipelines.yml (per app/service)
 extends:
-  template: /.azure-pipelines/templates/ci-cd-main.yml
+  template: /.azure-pipelines/templates/ci-cd-full.yml
   parameters:
-    language: 'typescript'
-    deployTarget: 'appservice'
-    runE2E: true
+    language: typescript
+    deployTarget: appservice
+    configLevel: strict
+    workingDirectory: src/my-api
 ```
 
 ```yaml
-# /.azure-pipelines/templates/ci-cd-main.yml
+# /.azure-pipelines/templates/ci-cd-full.yml
+# Composes: CI → Scan → UT → ST → PR
+variables:
+  - template: ../variables/common.yml
+
 stages:
-  - template: stages/build.yml
-    parameters:
-      language: ${{ parameters.language }}
-  - template: stages/test.yml
-  - template: stages/scan.yml
-  - template: stages/deploy.yml
-    parameters:
-      target: ${{ parameters.deployTarget }}
+  - template: ../stages/ci.yml        # lint, test, build, scan
+  - template: ../stages/cd-ut.yml     # deploy to UT
+  - template: ../stages/cd-st.yml     # deploy to ST
+  - template: ../stages/cd-pr.yml     # deploy to PR
 ```
 
 ---
