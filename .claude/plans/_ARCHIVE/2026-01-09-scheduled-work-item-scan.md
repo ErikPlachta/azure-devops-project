@@ -139,5 +139,9 @@ Demonstrates:
 - [x] Add attachment support
 - [x] Add dry run mode for safe testing
 - [x] Create example scheduled pipeline
-- [ ] Update framework documentation
-- [ ] Commit and push changes
+- [x] Create manual-run example pipeline
+- [x] Refactor to external scripts
+- [x] Update framework documentation
+- [x] Commit and push changes
+
+**Completed:** 2026-01-09
