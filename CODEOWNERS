@@ -1,7 +1,7 @@
 # CODEOWNERS - Require review for critical framework files
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Framework pipeline templates - require DevOps team review
+# Framework pipeline templates
 /.azure-pipelines/ @devops-team
 
 # Any pipeline definition in the repo
