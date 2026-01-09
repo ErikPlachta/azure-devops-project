@@ -56,6 +56,7 @@ Working code snippets, templates, and reference implementations.
 | Container CD | [pipelines/cd-appservice-container.yml](./pipelines/cd-appservice-container.yml) | Docker deploy |
 | Databricks CD | [pipelines/cd-databricks.yml](./pipelines/cd-databricks.yml) | Asset Bundle deploy |
 | Power BI CD | [pipelines/cd-powerbi.yml](./pipelines/cd-powerbi.yml) | REST/XMLA deploy |
+| SharePoint CD | [/examples/gpf-pm-module](../../examples/gpf-pm-module) | File sync to document library |
 
 ### Configuration Examples
 

@@ -1,0 +1,26 @@
+-- Securities Master Query - Development
+-- Returns all securities for testing
+
+SELECT
+    s.SecurityID,
+    s.ISIN,
+    s.CUSIP,
+    s.Ticker,
+    s.SecurityName,
+    s.SecurityType,
+    s.Currency,
+    s.Country,
+    s.Sector,
+    s.Industry,
+    s.MaturityDate,
+    s.Status,
+    p.LastPrice,
+    p.PriceDate,
+    -- Development: Include audit fields
+    s.CreatedBy,
+    s.CreatedDate
+FROM dbo.Securities_Dev s
+LEFT JOIN dbo.SecurityPrices_Dev p ON s.SecurityID = p.SecurityID
+    AND p.PriceDate = (SELECT MAX(PriceDate) FROM dbo.SecurityPrices_Dev WHERE SecurityID = s.SecurityID)
+WHERE 1=1  -- No status filter in dev
+ORDER BY s.Ticker

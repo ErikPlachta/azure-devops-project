@@ -1,0 +1,16 @@
+-- Benchmarks Master Query - Production
+-- Returns active benchmarks with constituents
+
+SELECT
+    b.BenchmarkID,
+    b.BenchmarkCode,
+    b.BenchmarkName,
+    b.BenchmarkType,
+    b.Currency,
+    b.Provider,
+    b.InceptionDate,
+    b.Status,
+    b.LastModified
+FROM dbo.Benchmarks b
+WHERE b.Status = 'Active'
+ORDER BY b.BenchmarkCode

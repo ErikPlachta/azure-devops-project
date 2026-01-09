@@ -1,0 +1,19 @@
+-- Benchmarks Master Query - Development
+-- Returns all benchmarks for testing
+
+SELECT
+    b.BenchmarkID,
+    b.BenchmarkCode,
+    b.BenchmarkName,
+    b.BenchmarkType,
+    b.Currency,
+    b.Provider,
+    b.InceptionDate,
+    b.Status,
+    b.LastModified,
+    -- Development fields
+    b.CreatedBy,
+    b.CreatedDate
+FROM dbo.Benchmarks_Dev b
+WHERE 1=1
+ORDER BY b.BenchmarkCode

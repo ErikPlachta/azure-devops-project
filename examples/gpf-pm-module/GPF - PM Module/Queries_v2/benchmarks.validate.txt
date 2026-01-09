@@ -1,0 +1,16 @@
+-- Benchmarks Master Query - Validation
+-- Returns active benchmarks from validation environment
+
+SELECT
+    b.BenchmarkID,
+    b.BenchmarkCode,
+    b.BenchmarkName,
+    b.BenchmarkType,
+    b.Currency,
+    b.Provider,
+    b.InceptionDate,
+    b.Status,
+    b.LastModified
+FROM dbo.Benchmarks_Val b
+WHERE b.Status = 'Active'
+ORDER BY b.BenchmarkCode

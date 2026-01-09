@@ -1,0 +1,24 @@
+-- Portfolio Master Query - Development
+-- Returns all portfolios including inactive for testing
+
+SELECT
+    p.PortfolioID,
+    p.PortfolioCode,
+    p.PortfolioName,
+    p.InceptionDate,
+    p.BaseCurrency,
+    p.BenchmarkID,
+    b.BenchmarkName,
+    p.PortfolioType,
+    p.Status,
+    p.LastModified,
+    -- Development: Include additional debug fields
+    p.CreatedBy,
+    p.CreatedDate,
+    p.ModifiedBy
+FROM dbo.Portfolios_Dev p
+LEFT JOIN dbo.Benchmarks_Dev b ON p.BenchmarkID = b.BenchmarkID
+WHERE 1=1  -- No status filter in dev
+ORDER BY p.PortfolioCode
+
+-- Development Note: Using _Dev tables for isolation

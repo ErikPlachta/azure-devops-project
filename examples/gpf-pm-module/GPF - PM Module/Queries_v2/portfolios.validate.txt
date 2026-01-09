@@ -1,0 +1,22 @@
+-- Portfolio Master Query - Validation
+-- Returns portfolios matching production criteria against validation data
+
+SELECT
+    p.PortfolioID,
+    p.PortfolioCode,
+    p.PortfolioName,
+    p.InceptionDate,
+    p.BaseCurrency,
+    p.BenchmarkID,
+    b.BenchmarkName,
+    p.PortfolioType,
+    p.Status,
+    p.LastModified
+FROM dbo.Portfolios_Val p
+LEFT JOIN dbo.Benchmarks_Val b ON p.BenchmarkID = b.BenchmarkID
+WHERE p.Status = 'Active'
+    AND p.EffectiveDate <= GETDATE()
+    AND (p.TerminationDate IS NULL OR p.TerminationDate > GETDATE())
+ORDER BY p.PortfolioCode
+
+-- Validation Note: Uses _Val tables with production-like data

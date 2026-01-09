@@ -1,0 +1,32 @@
+{
+  "$schema": "./schema/master-config.schema.json",
+  "version": "2.0.0",
+  "environment": "development",
+  "module": {
+    "name": "MASTER",
+    "description": "Master Data Configuration - Development",
+    "enabled": true
+  },
+  "entities": {
+    "portfolios": {
+      "enabled": true,
+      "queryFile": "portfolios.development.txt",
+      "refreshSchedule": "*/15 * * * *"
+    },
+    "securities": {
+      "enabled": true,
+      "queryFile": "securities.development.txt",
+      "refreshSchedule": "*/15 * * * *"
+    },
+    "benchmarks": {
+      "enabled": true,
+      "queryFile": "benchmarks.development.txt",
+      "refreshSchedule": "*/15 * * * *"
+    }
+  },
+  "validation": {
+    "strictMode": false,
+    "allowNulls": true,
+    "requirePrimaryKey": false
+  }
+}

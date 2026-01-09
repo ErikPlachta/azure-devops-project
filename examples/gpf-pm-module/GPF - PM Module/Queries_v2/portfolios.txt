@@ -1,0 +1,20 @@
+-- Portfolio Master Query - Production
+-- Returns active portfolios with current allocations
+
+SELECT
+    p.PortfolioID,
+    p.PortfolioCode,
+    p.PortfolioName,
+    p.InceptionDate,
+    p.BaseCurrency,
+    p.BenchmarkID,
+    b.BenchmarkName,
+    p.PortfolioType,
+    p.Status,
+    p.LastModified
+FROM dbo.Portfolios p
+LEFT JOIN dbo.Benchmarks b ON p.BenchmarkID = b.BenchmarkID
+WHERE p.Status = 'Active'
+    AND p.EffectiveDate <= GETDATE()
+    AND (p.TerminationDate IS NULL OR p.TerminationDate > GETDATE())
+ORDER BY p.PortfolioCode

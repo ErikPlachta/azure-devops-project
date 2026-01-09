@@ -1,0 +1,168 @@
+# GPF - PM Module Pipeline
+# Validates and deploys configuration files to SharePoint
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    include:
+      - examples/gpf-pm-module/**
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - examples/gpf-pm-module/**
+
+variables:
+  - name: workingDirectory
+    value: 'examples/gpf-pm-module'
+  - name: sharePointSite
+    value: 'https://$(tenant).sharepoint.com/sites/$(siteName)'
+  - name: sharePointFolder
+    value: '/Shared Documents/GPF - PM Module'
+
+stages:
+  # Validation Stage - All branches
+  - stage: Validate
+    displayName: 'Validate Configuration'
+    jobs:
+      - job: ValidateJSON
+        displayName: 'Validate JSON Files'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              echo "Validating JSON configuration files..."
+              ERRORS=0
+
+              for file in $(find "$(workingDirectory)/GPF - PM Module/CONFIG" -name "*.json" -type f); do
+                echo "Checking: $file"
+                if ! python -m json.tool "$file" > /dev/null 2>&1; then
+                  echo "##vso[task.logissue type=error]Invalid JSON: $file"
+                  ERRORS=$((ERRORS + 1))
+                fi
+              done
+
+              if [ $ERRORS -gt 0 ]; then
+                echo "##vso[task.logissue type=error]Found $ERRORS invalid JSON files"
+                exit 1
+              fi
+
+              echo "All JSON files are valid"
+            displayName: 'Validate JSON syntax'
+
+      - job: ValidateSQL
+        displayName: 'Validate SQL Files'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              pip install sqlfluff
+            displayName: 'Install SQLFluff'
+
+          - script: |
+              echo "Validating SQL query files..."
+              cd "$(workingDirectory)/GPF - PM Module/Queries_v2"
+
+              # Rename .txt to .sql temporarily for sqlfluff
+              for f in *.txt; do
+                if [ -f "$f" ]; then
+                  cp "$f" "${f%.txt}.sql"
+                fi
+              done
+
+              # Run sqlfluff (warn only, don't fail)
+              sqlfluff lint . --dialect tsql || true
+
+              # Cleanup
+              rm -f *.sql
+
+              echo "SQL validation complete"
+            displayName: 'Lint SQL files'
+            continueOnError: true
+
+      - job: ValidateEnvironments
+        displayName: 'Validate Environment Configs'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              echo "Checking environment configuration consistency..."
+
+              CONFIG_DIR="$(workingDirectory)/GPF - PM Module/CONFIG"
+
+              # Check that all environments have matching files
+              BASE_FILES=$(ls "$CONFIG_DIR"/*.json 2>/dev/null | grep -v '\.development\.' | grep -v '\.validate\.' | xargs -n1 basename)
+
+              for base in $BASE_FILES; do
+                name="${base%.json}"
+                echo "Checking: $name"
+
+                if [ ! -f "$CONFIG_DIR/${name}.development.json" ]; then
+                  echo "##vso[task.logissue type=warning]Missing: ${name}.development.json"
+                fi
+
+                if [ ! -f "$CONFIG_DIR/${name}.validate.json" ]; then
+                  echo "##vso[task.logissue type=warning]Missing: ${name}.validate.json"
+                fi
+              done
+
+              echo "Environment check complete"
+            displayName: 'Check environment files'
+
+  # Deploy to Development - develop branch
+  - stage: Deploy_Development
+    displayName: 'Deploy to Development'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-sharepoint.yml
+        parameters:
+          environment: development
+          azureSubscription: '$(azureSubscription)'
+          sharePointSiteUrl: '$(sharePointSite)'
+          sharePointFolder: '$(sharePointFolder)'
+          sourceFolder: '$(workingDirectory)/GPF - PM Module'
+          filePatterns: '**/*.development.json,**/*.development.txt'
+          cleanTargetFolder: false
+
+  # Deploy to Validation - release/* branches
+  - stage: Deploy_Validate
+    displayName: 'Deploy to Validation'
+    dependsOn: Validate
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-sharepoint.yml
+        parameters:
+          environment: validate
+          azureSubscription: '$(azureSubscription)'
+          sharePointSiteUrl: '$(sharePointSite)'
+          sharePointFolder: '$(sharePointFolder)'
+          sourceFolder: '$(workingDirectory)/GPF - PM Module'
+          filePatterns: '**/*.validate.json,**/*.validate.txt'
+          cleanTargetFolder: false
+
+  # Deploy to Production - main branch
+  - stage: Deploy_Production
+    displayName: 'Deploy to Production'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - template: /.azure-pipelines/jobs/deploy-sharepoint.yml
+        parameters:
+          environment: production
+          azureSubscription: '$(azureSubscription)'
+          sharePointSiteUrl: '$(sharePointSite)'
+          sharePointFolder: '$(sharePointFolder)'
+          sourceFolder: '$(workingDirectory)/GPF - PM Module'
+          # Production: deploy base files (no .development or .validate suffix)
+          filePatterns: '**/*.json,**/*.txt'
+          excludePatterns: '.development.,.validate.'
+          cleanTargetFolder: false

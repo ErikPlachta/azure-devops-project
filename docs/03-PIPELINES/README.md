@@ -31,6 +31,7 @@ CI/CD templates, patterns, and deployment strategies.
 | [APP-SERVICE-DEPLOY.md](./APP-SERVICE-DEPLOY.md) | Direct and containerized |
 | [DATABRICKS-DEPLOY.md](./DATABRICKS-DEPLOY.md) | Asset Bundles, Unity Catalog |
 | [POWERBI-DEPLOY.md](./POWERBI-DEPLOY.md) | REST API, XMLA endpoint |
+| [SHAREPOINT-DEPLOY.md](./SHAREPOINT-DEPLOY.md) | File sync via PnP.PowerShell |
 
 ---
 

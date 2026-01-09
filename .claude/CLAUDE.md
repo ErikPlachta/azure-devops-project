@@ -10,7 +10,7 @@ Azure DevOps Reference Framework - enterprise CI/CD templates and documentation 
 
 **.azure-pipelines/** - Modular pipeline templates:
 - `configs/` - Linter configs (eslint, ruff, dotnet) with 3 levels: relaxed, base, strict
-- `jobs/` - Atomic CI/CD jobs (lint, test, scan-*, build-*, deploy-*)
+- `jobs/` - Atomic CI/CD jobs (lint, test, scan-*, build-*, deploy-sharepoint)
 - `stages/` - Stage compositions (ci.yml, cd-ut/st/pr.yml)
 - `templates/` - High-level orchestrators (ci-cd-full.yml, ci-only.yml, cd-*.yml)
 - `variables/` - Shared vars (common.yml, environments.yml, thresholds.yml)
@@ -25,7 +25,7 @@ extends:
   template: /.azure-pipelines/templates/ci-cd-full.yml
   parameters:
     language: typescript|python|dotnet
-    deployTarget: appservice|databricks|powerbi
+    deployTarget: appservice|databricks|powerbi|sharepoint
     configLevel: relaxed|base|strict
     workingDirectory: src/my-project
 ```

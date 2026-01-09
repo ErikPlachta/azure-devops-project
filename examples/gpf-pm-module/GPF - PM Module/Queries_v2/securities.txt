@@ -1,0 +1,23 @@
+-- Securities Master Query - Production
+-- Returns active securities with pricing data
+
+SELECT
+    s.SecurityID,
+    s.ISIN,
+    s.CUSIP,
+    s.Ticker,
+    s.SecurityName,
+    s.SecurityType,
+    s.Currency,
+    s.Country,
+    s.Sector,
+    s.Industry,
+    s.MaturityDate,
+    s.Status,
+    p.LastPrice,
+    p.PriceDate
+FROM dbo.Securities s
+LEFT JOIN dbo.SecurityPrices p ON s.SecurityID = p.SecurityID
+    AND p.PriceDate = (SELECT MAX(PriceDate) FROM dbo.SecurityPrices WHERE SecurityID = s.SecurityID)
+WHERE s.Status = 'Active'
+ORDER BY s.Ticker
